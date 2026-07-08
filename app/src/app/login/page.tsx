@@ -43,7 +43,7 @@ export default function LoginPage() {
             </div>
           </div>
           <h1 className="text-3xl font-bold gradient-text mb-2">Welcome Back</h1>
-          <p className="text-muted-foreground">Sign in to continue to Ads AI</p>
+          <p className="text-muted-foreground">Sign in to create smarter ads with AI</p>
         </div>
 
         {/* Login Form */}
