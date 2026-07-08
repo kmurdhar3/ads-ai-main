@@ -294,6 +294,9 @@ CREATE TRIGGER update_brand_contexts_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
+
+---
+ALTER TABLE concepts ADD COLUMN reference_image_url TEXT;
 -- ===========================================
 -- COMMENTS
 -- ===========================================
