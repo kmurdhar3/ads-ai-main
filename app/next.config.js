@@ -1,10 +1,10 @@
-import type { NextConfig } from "next";
-import { config } from "dotenv";
-import path from "path";
+const { config } = require("dotenv");
+const path = require("path");
 
 config({ path: path.join(__dirname, "..", ".env") });
 
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "**.fbcdn.net" },
@@ -18,4 +18,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+module.exports = nextConfig;

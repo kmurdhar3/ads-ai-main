@@ -66,6 +66,7 @@ export function AppSidebar() {
         alt="AdLaunch AI Logo" 
         width={36}
         height={36}
+        unoptimized
         className="h-full w-full object-cover"
       />
     </div>

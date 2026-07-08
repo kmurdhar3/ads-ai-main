@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readBrandContext, writeBrandContext, readProducts } from "@/lib/csv";
 import { BrandContext } from "@/lib/types";
+import { getAuthenticatedUser } from "@/lib/auth-server";
+import { getBrandContext, saveBrandContext } from "@/lib/db/brand-context";
+import { getProducts } from "@/lib/db/products";
 import fs from "fs";
 import path from "path";
 
@@ -29,9 +32,27 @@ function clearDownstreamData() {
 }
 
 export async function GET() {
-  const brandContext = readBrandContext();
-  const products = readProducts();
+  const user = await getAuthenticatedUser();
 
+  if (!user) {
+    // Fallback to file system
+    const brandContext = readBrandContext();
+    const products = readProducts();
+    let assets: string[] = [];
+    const assetsDir = path.join(DATA_DIR, "brand-assets");
+    if (fs.existsSync(assetsDir)) {
+      assets = fs
+        .readdirSync(assetsDir)
+        .filter((f) => /^(web-|ig-|asset-).*\.(png|jpg|jpeg|webp|svg)$/i.test(f));
+    }
+    return NextResponse.json({ brandContext, products, assets });
+  }
+
+  // User-scoped data from Supabase
+  const brandContext = await getBrandContext(user.id);
+  const products = await getProducts(user.id);
+  
+  // Assets still stored in file system (user-specific folder could be added later)
   let assets: string[] = [];
   const assetsDir = path.join(DATA_DIR, "brand-assets");
   if (fs.existsSync(assetsDir)) {
@@ -46,6 +67,7 @@ export async function GET() {
 export async function PUT(req: NextRequest) {
   const body = await req.json();
   const ctx: BrandContext = body;
+  const user = await getAuthenticatedUser();
 
   if (!ctx.name) {
     return NextResponse.json({ error: "Brand name is required" }, { status: 400 });
@@ -64,11 +86,24 @@ export async function PUT(req: NextRequest) {
     ctx.keywords = [];
   }
 
-  const existing = readBrandContext();
+  if (!user) {
+    // Fallback to file system
+    const existing = readBrandContext();
+    const brandChanged = !existing || existing.name !== ctx.name || existing.url !== ctx.url;
+    await writeBrandContext(ctx);
+    if (brandChanged) {
+      clearDownstreamData();
+    }
+    return NextResponse.json({ success: true, brandContext: ctx, downstreamCleared: brandChanged });
+  }
+
+  // User-scoped save to Supabase
+  const existing = await getBrandContext(user.id);
   const brandChanged = !existing || existing.name !== ctx.name || existing.url !== ctx.url;
 
-  await writeBrandContext(ctx);
+  await saveBrandContext(user.id, ctx);
 
+  // Clear downstream data is still file-based for now
   if (brandChanged) {
     clearDownstreamData();
   }

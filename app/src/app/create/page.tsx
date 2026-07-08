@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import { useAuth } from "@/context/auth-context";
 import { Sparkles, Star, Loader2, ArrowRight, ChevronRight, Clock, FileText, Film, Lightbulb, Target, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -107,26 +108,82 @@ export default function CreatePage() {
   // Configurable controls
   const [conceptCount, setConceptCount] = useState(10);
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
+  const auth = useAuth();
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/brand").then((r) => r.json()).catch(() => null),
-      fetch("/api/create").then((r) => r.json()).catch(() => []),
-      fetch("/api/status").then((r) => r.json()).catch(() => null),
-      fetch("/api/competitors?type=meta-ads").then((r) => r.json()).catch(() => []),
-    ]).then(([brandData, conceptsData, statusData, metaAdsData]) => {
-      if (brandData) {
-        setBrand(brandData.brand);
-        setBrandContext(brandData.brandContext || null);
-        setProducts(brandData.products || []);
-        if (!brandData.brand && !brandData.brandContext) setShowSetup(true);
-      } else {
-        setShowSetup(true);
+    let mounted = true;
+    (async () => {
+      try {
+        // If logged-in, load directly from Supabase DB helpers for correct user scoping
+        const user = auth.user ?? null;
+
+        if (user) {
+          const [{ getBrandContext }, { getProducts }, { getConcepts }, { getMetaAds }] = await Promise.all([
+            import("@/lib/db/brand-context"),
+            import("@/lib/db/products"),
+            import("@/lib/db/concepts"),
+            import("@/lib/db/meta-ads"),
+          ]);
+
+          const [brandContextData, productsData, conceptsData, metaAdsData] = await Promise.all([
+            getBrandContext(user.id),
+            getProducts(user.id),
+            getConcepts(user.id),
+            getMetaAds(user.id),
+          ]);
+
+          if (!mounted) return;
+          const brand = brandContextData
+            ? {
+                name: brandContextData.name,
+                url: brandContextData.url || "",
+                description: brandContextData.description,
+                tagline: brandContextData.tagline || "",
+                products: "",
+                colors: brandContextData.colors || "",
+                logoUrl: brandContextData.logoUrl || "",
+                faviconUrl: brandContextData.faviconUrl || "",
+                style: brandContextData.style || "",
+                instagramHandle: brandContextData.instagramHandle || "",
+                instagramFollowers: String(brandContextData.instagramFollowers || ""),
+                instagramProfilePicUrl: brandContextData.instagramProfilePicUrl || "",
+              }
+            : null;
+
+          setBrand(brand);
+          setBrandContext(brandContextData || null);
+          setProducts(productsData || []);
+          setConcepts(Array.isArray(conceptsData) ? conceptsData : []);
+          setMetaAds(Array.isArray(metaAdsData) ? metaAdsData : []);
+          
+          if (!brandContextData) setShowSetup(true);
+        } else {
+          // Anonymous: use legacy API endpoints
+          const [brandData, conceptsData, statusData, metaAdsData] = await Promise.all([
+            fetch("/api/brand").then((r) => r.json()).catch(() => null),
+            fetch("/api/create").then((r) => r.json()).catch(() => []),
+            fetch("/api/status").then((r) => r.json()).catch(() => null),
+            fetch("/api/competitors?type=meta-ads").then((r) => r.json()).catch(() => []),
+          ]);
+
+          if (!mounted) return;
+          if (brandData) {
+            setBrand(brandData.brand);
+            setBrandContext(brandData.brandContext || null);
+            setProducts(brandData.products || []);
+            if (!brandData.brand && !brandData.brandContext) setShowSetup(true);
+          } else {
+            setShowSetup(true);
+          }
+          setConcepts(Array.isArray(conceptsData) ? conceptsData : []);
+          if (statusData) setStatus(statusData);
+          setMetaAds(Array.isArray(metaAdsData) ? metaAdsData : []);
+        }
+      } catch (e) {
+        console.error("Failed to load initial data:", e);
       }
-      setConcepts(Array.isArray(conceptsData) ? conceptsData : []);
-      if (statusData) setStatus(statusData);
-      setMetaAds(Array.isArray(metaAdsData) ? metaAdsData : []);
-    });
+    })();
+    return () => { mounted = false };
   }, []);
 
   const brandName = brandContext?.name || brand?.name || "Your Brand";

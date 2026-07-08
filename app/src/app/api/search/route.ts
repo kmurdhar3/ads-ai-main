@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readBrandContext, readSearchState, writeSearchState, writeMetaAds } from "@/lib/csv";
+import { getAuthenticatedUser } from "@/lib/auth-server";
+import { saveMetaAds } from "@/lib/db/meta-ads";
+import { createServerClient } from "@supabase/ssr";
 import { scrapeMetaAds, downloadAdImage } from "@/lib/apify";
 import { scoreAdvertisers, extractKeywords } from "@/lib/competitor-scoring";
 import { MetaAdEntry } from "@/lib/types";
@@ -9,6 +12,39 @@ export const maxDuration = 300;
 const BATCH_SIZE = 3;
 
 export async function GET() {
+  // Prefer DB-backed search state when authenticated
+  try {
+    const user = await getAuthenticatedUser();
+    if (user) {
+      const supabase = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+          cookies: {
+            getAll() {
+              return []; // no-op for server route GET
+            },
+            setAll() {},
+          },
+        }
+      );
+
+      const { data, error } = await supabase
+        .from("search_results")
+        .select("*, meta_ads(*)")
+        .eq("user_id", user.id)
+        .order("searched_at", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (!data || error) return NextResponse.json(null);
+
+      return NextResponse.json(data);
+    }
+  } catch (e) {
+    // fallback to file
+  }
+
   const state = readSearchState();
   return NextResponse.json(state);
 }
@@ -18,7 +54,16 @@ export async function POST(req: NextRequest) {
   const action: string = body.action || "search";
 
   if (action === "suggest-keywords") {
-    const brandContext = readBrandContext();
+    const user = await getAuthenticatedUser();
+    let brandContext = null;
+    
+    if (user) {
+      const { getBrandContext } = await import("@/lib/db/brand-context");
+      brandContext = await getBrandContext(user.id);
+    } else {
+      brandContext = readBrandContext();
+    }
+    
     if (!brandContext) {
       return NextResponse.json({ error: "No brand context found" }, { status: 400 });
     }
@@ -149,9 +194,33 @@ export async function POST(req: NextRequest) {
           stopHeartbeat();
         }
 
-        if (allMetaAds.length > 0) {
-          await writeMetaAds(allMetaAds);
-        }
+            if (allMetaAds.length > 0) {
+              const user = await getAuthenticatedUser();
+              if (user) {
+                // Persist meta-ads and search result into Supabase
+                await saveMetaAds(user.id, allMetaAds);
+
+                try {
+                  const supabase = createServerClient(
+                    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+                    { cookies: { getAll() { return req.cookies.getAll() }, setAll() {} } }
+                  );
+                  const advertisers = scoreAdvertisers(allMetaAds);
+                  await supabase.from("search_results").insert({
+                    user_id: user.id,
+                    keywords,
+                    advertisers,
+                    total_ads_scraped: allMetaAds.length,
+                    searched_at: new Date().toISOString(),
+                  });
+                } catch (e) {
+                  // ignore write errors
+                }
+              } else {
+                await writeMetaAds(allMetaAds);
+              }
+            }
 
         emit({ phase: "scoring", message: "Scoring advertisers..." });
 

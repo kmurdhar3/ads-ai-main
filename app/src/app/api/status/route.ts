@@ -1,7 +1,34 @@
 import { NextResponse } from "next/server";
 import { readBrandContext, readBrand, readConcepts, readKnowledge, readMetaAds, readSearchState, readAnalysis } from "@/lib/csv";
+import { getAuthenticatedUser } from "@/lib/auth-server";
+import { getBrandContext } from "@/lib/db/brand-context";
+import { getConcepts } from "@/lib/db/concepts";
+import { getMetaAds } from "@/lib/db/meta-ads";
 
 export async function GET() {
+  try {
+    const user = await getAuthenticatedUser();
+    if (user) {
+      const [brandContext, concepts, metaAds] = await Promise.all([
+        getBrandContext(user.id),
+        getConcepts(user.id),
+        getMetaAds(user.id),
+      ]);
+
+      return NextResponse.json({
+        hasBrand: !!brandContext,
+        hasSearch: metaAds && metaAds.length > 0,
+        hasAnalysis: false,
+        competitorCount: (metaAds && metaAds.length) || 0,
+        metaAdCount: (metaAds && metaAds.length) || 0,
+        conceptCount: (concepts && concepts.length) || 0,
+        knowledgeCount: 0,
+      });
+    }
+  } catch (e) {
+    // fallback to file-based diagnostics
+  }
+
   const brandContext = readBrandContext();
   const legacyBrand = readBrand();
   const concepts = readConcepts();

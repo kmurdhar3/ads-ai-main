@@ -1,7 +1,7 @@
 {
   "name": "ads-ai",
   "scripts": {
-    "dev": "npm run dev --prefix app -- -p 3002",
+    "dev": "npm run dev --prefix app",
     "build": "npm run build --prefix app",
     "start": "npm run start --prefix app",
     "lint": "npm run lint --prefix app"

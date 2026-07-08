@@ -2,6 +2,12 @@ import { NextRequest } from "next/server";
 import fs from "fs";
 import path from "path";
 import { readBrandContext, readBrand, readProducts, readKnowledge, readMetaAds, readKnowledgeMarkdown, readAnalysis, writeConcepts } from "@/lib/csv";
+import { getAuthenticatedUser } from "@/lib/auth-server";
+import { getBrandContext } from "@/lib/db/brand-context";
+import { getProducts } from "@/lib/db/products";
+import { getMetaAds } from "@/lib/db/meta-ads";
+import { createServerClient } from "@supabase/ssr";
+import { saveConcept } from "@/lib/db/concepts";
 import { generateReplicaAdConcept } from "@/lib/claude";
 import { evaluateCreative } from "@/lib/quality-control";
 import { generateAdImage } from "@/lib/kie-ai";
@@ -67,8 +73,17 @@ export async function POST(req: NextRequest) {
   const count: number = Math.min(Math.max(body.count || 10, 1), 30);
   const productNames: string[] | undefined = body.productNames;
 
-  const brandContext = readBrandContext();
-  const legacyBrand = readBrand();
+  const user = await getAuthenticatedUser();
+
+  let brandContext = null;
+  let legacyBrand = null;
+  if (user) {
+    brandContext = await getBrandContext(user.id);
+  } else {
+    legacyBrand = readBrand();
+    brandContext = readBrandContext();
+  }
+
   const brand: BrandContext | Brand | null = brandContext || legacyBrand;
 
   if (!brand) {
@@ -77,15 +92,24 @@ export async function POST(req: NextRequest) {
       headers: { "Content-Type": "application/json" },
     });
   }
-
-  let products = readProducts();
+  let products = [];
+  if (user) {
+    products = await getProducts(user.id);
+  } else {
+    products = readProducts();
+  }
   if (productNames && productNames.length > 0) {
     const nameSet = new Set(productNames.map((n) => n.toLowerCase()));
     products = products.filter((p) => nameSet.has(p.name.toLowerCase()));
   }
 
   const knowledge = readKnowledge();
-  const metaAds = readMetaAds();
+  let metaAds = [];
+  if (user) {
+    metaAds = await getMetaAds(user.id);
+  } else {
+    metaAds = readMetaAds();
+  }
 
   if (metaAds.length === 0) {
     return new Response(JSON.stringify({ error: "No competitor ads found. Search first." }), {
@@ -264,7 +288,49 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      await writeConcepts(allConcepts);
+      // Persist concepts per-user when authenticated
+      if (user) {
+        try {
+          // Bulk insert via server client for performance
+          const supabase = createServerClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+            { cookies: { getAll() { return req.cookies.getAll() }, setAll() {} } }
+          );
+
+          const rows = allConcepts.map((c) => ({
+            user_id: user.id,
+            headline: c.headline,
+            body: c.body,
+            description: c.description || "",
+            cta_text: c.ctaText || "",
+            image_prompt: c.imagePrompt || "",
+            generated_image_url: c.generatedImageUrl || "",
+            video_script: c.videoScript || "",
+            ad_type: c.adType || "static",
+            target_audience: c.targetAudience || "",
+            format: c.format || "",
+            placements: c.placements || "",
+            rationale: c.rationale || "",
+            product_name: c.productName || "",
+            inspiration_ad_ids: c.inspirationAdIds || "",
+            starred: c.starred || false,
+            quality_score: c.qualityScore || null,
+            quality_feedback: c.qualityFeedback || "",
+            qc_passed: c.qcPassed !== false,
+            created_at: c.createdAt || new Date().toISOString(),
+          }));
+
+          await supabase.from("concepts").insert(rows);
+        } catch (e) {
+          // fallback: save individually
+          for (const c of allConcepts) {
+            try { await saveConcept(user.id, c); } catch {}
+          }
+        }
+      } else {
+        await writeConcepts(allConcepts);
+      }
       const elapsed = Math.round((Date.now() - startTime) / 1000);
       send({ type: "complete", total: allConcepts.length, elapsedSeconds: elapsed });
       controller.close();

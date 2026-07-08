@@ -55,6 +55,48 @@ function clearDownstreamData() {
 }
 
 export async function GET() {
+  // Prefer authenticated user data from Supabase when available
+  try {
+    const { getAuthenticatedUser } = await import("@/lib/auth-server");
+    const user = await getAuthenticatedUser();
+
+    if (user) {
+      const { getBrandContext } = await import("@/lib/db/brand-context");
+      const { getProducts } = await import("@/lib/db/products");
+      const brandContext = await getBrandContext(user.id);
+      const products = await getProducts(user.id);
+
+      let assets: string[] = [];
+      const assetsDir = path.join(DATA_DIR, "brand-assets");
+      if (fs.existsSync(assetsDir)) {
+        assets = fs
+          .readdirSync(assetsDir)
+          .filter((f) => /^(web-|ig-|asset-).*\.(png|jpg|jpeg|webp|svg)$/i.test(f));
+      }
+
+      const brand = brandContext
+        ? {
+            name: brandContext.name,
+            url: brandContext.url || "",
+            description: brandContext.description,
+            tagline: brandContext.tagline || "",
+            products: "",
+            colors: brandContext.colors || "",
+            logoUrl: brandContext.logoUrl || "",
+            faviconUrl: brandContext.faviconUrl || "",
+            style: brandContext.style || "",
+            instagramHandle: brandContext.instagramHandle || "",
+            instagramFollowers: String(brandContext.instagramFollowers || ""),
+            instagramProfilePicUrl: brandContext.instagramProfilePicUrl || "",
+          }
+        : null;
+
+      return NextResponse.json({ brand, brandContext, products, assets });
+    }
+  } catch (e) {
+    // ignore and fallback to file-based legacy behavior
+  }
+
   const brandContext = readBrandContext();
   const legacyBrand = readBrand();
   const products = readProducts();
@@ -239,11 +281,10 @@ export async function POST(req: NextRequest) {
 
         emit("saving", "Saving brand profile...", 92);
 
-        // Write legacy CSV
-        await writeBrand(brand);
-        await writeProducts(products);
+        // If authenticated, persist to Supabase per-user; otherwise write legacy CSV
+        const { getAuthenticatedUser } = await import("@/lib/auth-server");
+        const user = await getAuthenticatedUser();
 
-        // Also write new JSON brand context
         const brandContext: BrandContext = {
           name: brand.name,
           url: websiteUrl,
@@ -270,7 +311,20 @@ export async function POST(req: NextRequest) {
           collectedAt: new Date().toISOString(),
           collectedBy: "web-form",
         };
-        await writeBrandContext(brandContext);
+        if (user) {
+          const { saveBrandContext } = await import("@/lib/db/brand-context");
+          const { saveProducts } = await import("@/lib/db/products");
+
+          await saveBrandContext(user.id, brandContext);
+          await saveProducts(user.id, products);
+        } else {
+          // Write legacy CSV
+          await writeBrand(brand);
+          await writeProducts(products);
+
+          // Also write new JSON brand context
+          await writeBrandContext(brandContext);
+        }
 
         emit(
           "done",
