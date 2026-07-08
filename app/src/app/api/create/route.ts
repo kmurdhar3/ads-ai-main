@@ -7,7 +7,6 @@ import { getConcepts, updateConceptStar, saveConcept } from "@/lib/db/concepts";
 import { getBrandContext } from "@/lib/db/brand-context";
 import { getProducts } from "@/lib/db/products";
 import { getMetaAds } from "@/lib/db/meta-ads";
-import { getAuthenticatedUser } from "@/lib/auth-server";
 
 export async function GET() {
   const user = await getAuthenticatedUser();
