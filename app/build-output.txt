@@ -1,0 +1,81 @@
+
+> ads-ai-app@0.1.0 build
+> next build
+
+◇ injected env (8) from ../.env // tip: ⌁ auth for agents [www.vestauth.com]
+ ⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /home/kamlesh/Documents/Kamlesh/Twitter/ads-ai-main/package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * /home/kamlesh/Documents/Kamlesh/Twitter/ads-ai-main/app/package-lock.json
+
+   ▲ Next.js 15.5.20
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+◇ injected env (0) from ../.env // tip: ⌘ override existing { override: true }
+◇ injected env (0) from ../.env // tip: ⌘ enable debugging { debug: true }
+<w> [webpack.cache.PackFileCacheStrategy] Serializing big strings (106kiB) impacts deserialization performance (consider using Buffer instead and decode when needed)
+<w> [webpack.cache.PackFileCacheStrategy] Serializing big strings (253kiB) impacts deserialization performance (consider using Buffer instead and decode when needed)
+ ⚠ Compiled with warnings in 1214ms
+
+./node_modules/@supabase/supabase-js/dist/index.mjs
+A Node.js API is used (process.version at line: 27) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace for requested module:
+./node_modules/@supabase/supabase-js/dist/index.mjs
+./node_modules/@supabase/ssr/dist/module/createServerClient.js
+./node_modules/@supabase/ssr/dist/module/index.js
+./src/lib/supabase/middleware.ts
+
+◇ injected env (0) from ../.env // tip: ⌘ suppress logs { quiet: true }
+ ✓ Compiled successfully in 9.6s
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/27) ...
+   Generating static pages (6/27) 
+   Generating static pages (13/27) 
+   Generating static pages (20/27) 
+ ✓ Generating static pages (27/27)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                 Size  First Load JS
+┌ ○ /                                      165 B         103 kB
+├ ○ /_not-found                            994 B         104 kB
+├ ○ /analysis                             6.2 kB         166 kB
+├ ƒ /api/analysis                          165 B         103 kB
+├ ƒ /api/auth/session                      165 B         103 kB
+├ ƒ /api/brand                             165 B         103 kB
+├ ƒ /api/brand-context                     165 B         103 kB
+├ ƒ /api/competitors                       165 B         103 kB
+├ ƒ /api/create                            165 B         103 kB
+├ ƒ /api/create/batch                      165 B         103 kB
+├ ƒ /api/knowledge                         165 B         103 kB
+├ ƒ /api/pipeline                          165 B         103 kB
+├ ƒ /api/proxy-image                       165 B         103 kB
+├ ƒ /api/search                            165 B         103 kB
+├ ƒ /api/status                            165 B         103 kB
+├ ƒ /api/tips                              165 B         103 kB
+├ ○ /brand                               7.83 kB         132 kB
+├ ○ /competitors                         5.14 kB         128 kB
+├ ○ /create                              7.11 kB         257 kB
+├ ○ /knowledge                           2.51 kB         163 kB
+├ ○ /login                               3.31 kB         191 kB
+├ ○ /run                                 4.18 kB         129 kB
+├ ○ /signup                              3.67 kB         191 kB
+├ ○ /sources                             2.09 kB         114 kB
+└ ○ /tips                                3.98 kB         162 kB
++ First Load JS shared by all             103 kB
+  ├ chunks/1255-d90f22433f14e976.js      46.2 kB
+  ├ chunks/4bd1b696-f785427dddbba9fb.js  54.2 kB
+  └ other shared chunks (total)          2.05 kB
+
+
+ƒ Middleware                             91.2 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
