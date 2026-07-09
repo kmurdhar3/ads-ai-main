@@ -31,9 +31,16 @@ export async function updateSession(request: NextRequest) {
   // supabase.auth.getUser(). A simple mistake could make it very hard to debug
   // issues with users being randomly logged out.
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  let user = null
+  try {
+    const {
+      data: { user: fetchedUser },
+    } = await supabase.auth.getUser()
+    user = fetchedUser
+  } catch (err) {
+    console.error('Supabase auth.getUser() failed in middleware:', err)
+    // Fall through with user = null rather than crashing the whole request
+  }
 
   if (
     !user &&
