@@ -112,7 +112,9 @@ export default function BrandPage() {
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [instagramHandle, setInstagramHandle] = useState("");
   const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [youtubeVideoCount, setYoutubeVideoCount] = useState(3);
   const [scraping, setScraping] = useState(false);
+  
   const [progress, setProgress] = useState<ScrapeProgress | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
@@ -150,6 +152,7 @@ export default function BrandPage() {
           websiteUrl,
           instagramHandle: instagramHandle.replace(/^@/, ""),
           youtubeUrl,
+          youtubeVideoCount,
         }),
       });
 
@@ -269,6 +272,24 @@ export default function BrandPage() {
                   placeholder="https://youtube.com/@channel"
                   disabled={scraping}
                 />
+                <div className="flex items-center gap-2 pt-1">
+                  <Label className="text-xs text-muted-foreground shrink-0">
+                    Videos to analyze
+                  </Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={youtubeVideoCount}
+                    onChange={(e) =>
+                      setYoutubeVideoCount(
+                        Math.min(Math.max(parseInt(e.target.value) || 1, 1), 10)
+                      )
+                    }
+                    disabled={scraping}
+                    className="h-7 w-16 text-xs"
+                  />
+                </div>
               </div>
             </div>
 
@@ -504,6 +525,25 @@ export default function BrandPage() {
                   placeholder="https://youtube.com/@channel"
                   disabled={scraping}
                 />
+                <div className="flex items-center gap-2 pt-1">
+                 <Label className="text-xs text-muted-foreground shrink-0">
+                   Videos to analyze
+                 </Label>
+                 <Input
+                   type="number"
+                   min={1}
+                   max={10}
+                   value={youtubeVideoCount}
+                   onChange={(e) =>
+                     setYoutubeVideoCount(
+                       Math.min(Math.max(parseInt(e.target.value) || 1, 1), 10)
+                     )
+                   }
+                   disabled={scraping}
+                   className="h-7 w-16 text-xs"
+                 />
+               </div>
+               
               </div>
             </div>
             <Button

@@ -133,6 +133,10 @@ export async function POST(req: NextRequest) {
   const websiteUrl: string = body.websiteUrl || "";
   const instagramHandle: string = body.instagramHandle || "";
   const youtubeUrl: string = body.youtubeUrl || "";
+  const youtubeVideoCount: number = Math.min(
+    Math.max(parseInt(body.youtubeVideoCount, 10) || 3, 1),
+    10
+  );
 
   if (!websiteUrl) {
     return NextResponse.json({ error: "websiteUrl is required" }, { status: 400 });
@@ -249,7 +253,7 @@ export async function POST(req: NextRequest) {
         if (youtubeUrl) {
           emit("youtube", `Scraping YouTube channel...`, 80);
           try {
-            youtubeData = await scrapeYouTubeChannel(youtubeUrl, 3);
+            youtubeData = await scrapeYouTubeChannel(youtubeUrl, youtubeVideoCount);
             if (!brand.description && youtubeData.description) {
               brand.description = youtubeData.description;
             }
