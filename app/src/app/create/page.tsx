@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Sparkles, Star, Loader2, ArrowRight, ChevronRight, Clock, FileText, Film, Lightbulb, Target, ExternalLink } from "lucide-react";
+import { Sparkles, Star, Loader2, ArrowRight, ChevronRight, Clock, FileText, Film, Lightbulb, Target, ExternalLink, Download, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -297,6 +297,72 @@ export default function CreatePage() {
     );
   }
 
+  function copyToClipboard(concept: AdConcept) {
+    const text = [
+      concept.headline,
+      "",
+      concept.body,
+      "",
+      concept.ctaText ? `CTA: ${concept.ctaText}` : "",
+    ].filter(Boolean).join("\n");
+
+    navigator.clipboard.writeText(text).then(() => {
+      alert("Copied to clipboard!");
+    }).catch(() => {
+      alert("Failed to copy to clipboard");
+    });
+  }
+
+  async function downloadImage(concept: AdConcept) {
+    if (!concept.generatedImageUrl) {
+      alert("No image available to download");
+      return;
+    }
+
+    try {
+      const filename = `${concept.headline.slice(0, 40).replace(/[^a-z0-9]/gi, '-')}.png`;
+      const response = await fetch(`/api/download-image?url=${encodeURIComponent(concept.generatedImageUrl)}&filename=${encodeURIComponent(filename)}`);
+
+      if (!response.ok) throw new Error("Download failed");
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (e) {
+      console.error("Download failed:", e);
+      alert("Failed to download image");
+    }
+  }
+
+  async function downloadBatch(batchId: string) {
+    try {
+      const response = await fetch(`/api/export-batch?batchId=${encodeURIComponent(batchId)}`);
+
+      if (!response.ok) {
+        throw new Error("Batch download failed");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "batch-export.zip";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (e) {
+      console.error("Batch download failed:", e);
+      alert("Failed to download batch");
+    }
+  }
+
   if (showSetup) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
@@ -461,11 +527,11 @@ export default function CreatePage() {
             return (
               <div key={batch.id} className="glass rounded-xl overflow-hidden">
                 {/* Batch Header */}
-                <button
-                  onClick={() => toggleBatch(batch.id)}
-                  className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/[0.02] transition-colors"
-                >
-                  <div className="flex items-center gap-3">
+                <div className="flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors">
+                  <button
+                    onClick={() => toggleBatch(batch.id)}
+                    className="flex items-center gap-3 flex-1"
+                  >
                     <ChevronRight
                       className={`h-4 w-4 text-muted-foreground transition-transform ${
                         isExpanded ? "rotate-90" : ""
@@ -483,8 +549,21 @@ export default function CreatePage() {
                         {name}
                       </Badge>
                     ))}
-                  </div>
-                </button>
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      downloadBatch(batch.id);
+                    }}
+                    title="Download batch as ZIP"
+                    className="flex items-center gap-1.5"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span className="text-xs">Download</span>
+                  </Button>
+                </div>
 
                 {/* Batch Concepts Grid */}
                 {isExpanded && batchConcepts.length > 0 && (
@@ -519,15 +598,34 @@ export default function CreatePage() {
                         </Badge>
                       )}
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => handleStar(concept.id, !concept.starred)}
-                    >
-                      <Star
-                        className={`h-4 w-4 ${concept.starred ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`}
-                      />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => copyToClipboard(concept)}
+                        title="Copy ad copy to clipboard"
+                      >
+                        <Copy className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => downloadImage(concept)}
+                        title="Download image"
+                      >
+                        <Download className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => handleStar(concept.id, !concept.starred)}
+                        title="Star this concept"
+                      >
+                        <Star
+                          className={`h-4 w-4 ${concept.starred ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`}
+                        />
+                      </Button>
+                    </div>
                   </div>
 
                   {/* Visual comparison — horizontal side by side with arrow */}
@@ -706,15 +804,34 @@ export default function CreatePage() {
                                 </Badge>
                               )}
                             </div>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() => handleStar(concept.id, !concept.starred)}
-                            >
-                              <Star
-                                className={`h-4 w-4 ${concept.starred ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`}
-                              />
-                            </Button>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => copyToClipboard(concept)}
+                                title="Copy ad copy to clipboard"
+                              >
+                                <Copy className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => downloadImage(concept)}
+                                title="Download image"
+                              >
+                                <Download className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => handleStar(concept.id, !concept.starred)}
+                                title="Star this concept"
+                              >
+                                <Star
+                                  className={`h-4 w-4 ${concept.starred ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`}
+                                />
+                              </Button>
+                            </div>
                           </div>
 
                           {/* Visual comparison */}

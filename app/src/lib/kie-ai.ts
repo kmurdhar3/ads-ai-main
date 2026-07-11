@@ -1,9 +1,7 @@
-import fs from "fs";
-import path from "path";
+import { createRouteClient } from "@/lib/supabase/route";
 
 const KIE_AI_API_KEY = process.env.KIE_AI_API_KEY || "";
 const BASE_URL = "https://api.kie.ai/api/v1/jobs";
-const DATA_DIR = path.join(process.cwd(), "..", "data");
 
 export async function generateAdImage(
   prompt: string,
@@ -84,17 +82,34 @@ async function downloadGeneratedImage(
   taskId: string
 ): Promise<string | null> {
   try {
-    const dir = path.join(DATA_DIR, "generated-images");
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
     const res = await fetch(url);
     if (!res.ok) return null;
 
     const buffer = Buffer.from(await res.arrayBuffer());
+
+    // Upload to Supabase Storage instead of local filesystem
+    const supabase = await createRouteClient();
     const filename = `${taskId}.png`;
-    fs.writeFileSync(path.join(dir, filename), buffer);
-    return `/api/proxy-image?path=generated-images/${filename}`;
-  } catch {
+
+    const { error: uploadError } = await supabase.storage
+      .from("generated-images")
+      .upload(filename, buffer, {
+        contentType: "image/png",
+        upsert: true
+      });
+
+    if (uploadError) {
+      console.error("Failed to upload to Supabase Storage:", uploadError);
+      return null;
+    }
+
+    const { data: urlData } = supabase.storage
+      .from("generated-images")
+      .getPublicUrl(filename);
+
+    return urlData.publicUrl;
+  } catch (e) {
+    console.error("Error in downloadGeneratedImage:", e);
     return null;
   }
 }
