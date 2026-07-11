@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Sparkles, Star, Loader2, ArrowRight, ChevronRight, Clock, FileText, Film, Lightbulb, Target, ExternalLink, Download, Copy } from "lucide-react";
+import { Sparkles, Star, Loader2, ArrowRight, ChevronRight, Clock, FileText, Film, Lightbulb, Target, ExternalLink, Download, Copy, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -100,6 +100,7 @@ export default function CreatePage() {
   const [status, setStatus] = useState<StatusData | null>(null);
   const [elapsedDisplay, setElapsedDisplay] = useState(0);
   const [detailModal, setDetailModal] = useState<{ concept: AdConcept; section: "copy" | "script" | "strategy" } | null>(null);
+  const [metaExportDialog, setMetaExportDialog] = useState<{ batchId: string; warnings: { truncated: number; ctaMapped: number } } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -363,6 +364,69 @@ export default function CreatePage() {
     }
   }
 
+  async function prepareMetaExport(batchId: string) {
+    const batchConcepts = conceptsByBatch.get(batchId) || [];
+
+    if (batchConcepts.length === 0) {
+      alert("No concepts in this batch");
+      return;
+    }
+
+    // Check for truncation and CTA mapping issues
+    const META_LIMITS = { title: 40, body: 125, description: 30 };
+    let truncated = 0;
+    let ctaMapped = 0;
+
+    for (const concept of batchConcepts) {
+      if (concept.headline.length > META_LIMITS.title ||
+          concept.body.length > META_LIMITS.body ||
+          (concept.description?.length || 0) > META_LIMITS.description) {
+        truncated++;
+      }
+
+      // Check if CTA would be auto-mapped to default
+      const ctaLower = concept.ctaText.toLowerCase();
+      const hasExactMatch = ctaLower.includes("shop") || ctaLower.includes("buy") ||
+                           ctaLower.includes("sign up") || ctaLower.includes("signup") ||
+                           ctaLower.includes("download") || ctaLower.includes("subscribe") ||
+                           ctaLower.includes("contact") || ctaLower.includes("offer") ||
+                           ctaLower.includes("deal") || ctaLower.includes("learn");
+
+      if (!hasExactMatch) {
+        ctaMapped++;
+      }
+    }
+
+    setMetaExportDialog({ batchId, warnings: { truncated, ctaMapped } });
+  }
+
+  async function executeMetaExport(batchId: string) {
+    try {
+      const response = await fetch(
+        `/api/export-meta?batchId=${encodeURIComponent(batchId)}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Meta export failed");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `meta-import-${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      setMetaExportDialog(null);
+    } catch (e) {
+      console.error("Meta export failed:", e);
+      alert("Failed to export for Meta");
+    }
+  }
+
   if (showSetup) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
@@ -550,19 +614,34 @@ export default function CreatePage() {
                       </Badge>
                     ))}
                   </button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      downloadBatch(batch.id);
-                    }}
-                    title="Download batch as ZIP"
-                    className="flex items-center gap-1.5"
-                  >
-                    <Download className="h-4 w-4" />
-                    <span className="text-xs">Download</span>
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadBatch(batch.id);
+                      }}
+                      title="Download batch as ZIP"
+                      className="flex items-center gap-1.5"
+                    >
+                      <Download className="h-4 w-4" />
+                      <span className="text-xs">Download</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        prepareMetaExport(batch.id);
+                      }}
+                      title="Export for Meta Ads Manager"
+                      className="flex items-center gap-1.5"
+                    >
+                      <Upload className="h-4 w-4" />
+                      <span className="text-xs">Export for Meta</span>
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Batch Concepts Grid */}
@@ -1086,6 +1165,71 @@ export default function CreatePage() {
                   </>
                 );
               })()}
+            </DialogContent>
+          </Dialog>
+
+          {/* Meta Export Pre-flight Dialog */}
+          <Dialog
+            open={!!metaExportDialog}
+            onOpenChange={(open) => { if (!open) setMetaExportDialog(null); }}
+          >
+            <DialogContent className="max-w-lg glass-strong rounded-2xl border-white/[0.08] p-6">
+              <DialogTitle className="text-xl font-bold mb-4">Export for Meta Ads Manager</DialogTitle>
+
+              <div className="space-y-4">
+                {/* Pre-flight warnings */}
+                {metaExportDialog && (
+                  <>
+                    {metaExportDialog.warnings.truncated > 0 && (
+                      <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                        <p className="text-sm text-amber-300">
+                          <strong>{metaExportDialog.warnings.truncated}</strong> concept
+                          {metaExportDialog.warnings.truncated !== 1 ? "s have" : " has"} copy truncated to fit Meta's character limits
+                        </p>
+                      </div>
+                    )}
+
+                    {metaExportDialog.warnings.ctaMapped > 0 && (
+                      <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
+                        <p className="text-sm text-blue-300">
+                          <strong>{metaExportDialog.warnings.ctaMapped}</strong> CTA
+                          {metaExportDialog.warnings.ctaMapped !== 1 ? "s were" : " was"} auto-mapped to "Learn More"
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3">
+                      <p className="text-sm text-purple-300">
+                        <strong>Campaign Objective is not set</strong> — you'll need to choose this in Meta Ads Manager before publishing
+                      </p>
+                    </div>
+
+                    <div className="bg-white/5 border border-white/10 rounded-lg p-3">
+                      <p className="text-sm text-muted-foreground">
+                        📝 Meta recommends test-importing 1-2 rows first to verify the template format is current
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                {/* Action buttons */}
+                <div className="flex items-center gap-3 pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setMetaExportDialog(null)}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => metaExportDialog && executeMetaExport(metaExportDialog.batchId)}
+                    className="flex-1 bg-gradient-to-r from-purple-500 to-indigo-600 text-white"
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    Download Export
+                  </Button>
+                </div>
+              </div>
             </DialogContent>
           </Dialog>
     </div>
