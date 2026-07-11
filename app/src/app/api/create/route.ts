@@ -4,13 +4,13 @@ import { generateAdConcept } from "@/lib/claude";
 import { generateAdImage } from "@/lib/kie-ai";
 import { getAuthenticatedUser } from "@/lib/auth-server";
 import { getConcepts, updateConceptStar, saveConcept } from "@/lib/db/concepts";
-import { getBrandContext } from "@/lib/db/brand-context";
+import { getBrandContext, getMostRecentBrandId } from "@/lib/db/brand-context";
 import { getProducts } from "@/lib/db/products";
 import { getMetaAds } from "@/lib/db/meta-ads";
 
 export async function GET() {
   const user = await getAuthenticatedUser();
-  
+
   if (!user) {
     // Fallback to file system for non-authenticated access
     const concepts = readConcepts();
@@ -18,7 +18,11 @@ export async function GET() {
   }
 
   // User-scoped data from Supabase
-  const concepts = await getConcepts(user.id);
+  const brandId = await getMostRecentBrandId(user.id);
+  if (!brandId) {
+    return NextResponse.json([]);
+  }
+  const concepts = await getConcepts(user.id, brandId);
   return NextResponse.json(concepts);
 }
 
@@ -29,8 +33,17 @@ export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   let brandContext = null;
   let legacyBrand = null;
+  let brandId: string | null = null;
+
   if (user) {
-    brandContext = await getBrandContext(user.id);
+    brandId = await getMostRecentBrandId(user.id);
+    if (!brandId) {
+      return NextResponse.json(
+        { error: "No brand profile found. Set up your brand first." },
+        { status: 400 }
+      );
+    }
+    brandContext = await getBrandContext(user.id, brandId);
   } else {
     legacyBrand = readBrand();
     brandContext = readBrandContext();
@@ -45,12 +58,12 @@ export async function POST(req: NextRequest) {
   }
 
   let products = [];
-  if (user) products = await getProducts(user.id);
+  if (user && brandId) products = await getProducts(user.id, brandId);
   else products = readProducts();
 
   const knowledge = readKnowledge();
   let metaAds = [];
-  if (user) metaAds = await getMetaAds(user.id);
+  if (user && brandId) metaAds = await getMetaAds(user.id, brandId);
   else metaAds = readMetaAds();
 
   const knowledgeTactics = knowledge
@@ -84,9 +97,9 @@ export async function POST(req: NextRequest) {
   }
 
   // Persist concept to DB for authenticated users, otherwise append to file
-  if (user) {
+  if (user && brandId) {
     try {
-      await saveConcept(user.id, concept as any);
+      await saveConcept(user.id, brandId, concept as any);
     } catch (e) {
       // fallback to file
       await appendConcepts([concept]);
@@ -116,7 +129,11 @@ export async function PATCH(req: NextRequest) {
 
   // User-scoped update in Supabase
   await updateConceptStar(user.id, id, starred);
-  const concepts = await getConcepts(user.id);
+  const brandId = await getMostRecentBrandId(user.id);
+  if (!brandId) {
+    return NextResponse.json({ error: "No brand found" }, { status: 404 });
+  }
+  const concepts = await getConcepts(user.id, brandId);
   const concept = concepts.find((c) => c.id === id);
   return NextResponse.json(concept);
 }

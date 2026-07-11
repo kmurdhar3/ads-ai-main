@@ -118,18 +118,24 @@ export default function CreatePage() {
         const user = auth.user ?? null;
 
         if (user) {
-          const [{ getBrandContext }, { getProducts }, { getConcepts }, { getMetaAds }] = await Promise.all([
+          const [{ getBrandContext, getMostRecentBrandId }, { getProducts }, { getConcepts }, { getMetaAds }] = await Promise.all([
             import("@/lib/db/brand-context"),
             import("@/lib/db/products"),
             import("@/lib/db/concepts"),
             import("@/lib/db/meta-ads"),
           ]);
 
+          const brandId = await getMostRecentBrandId(user.id);
+          if (!brandId) {
+            if (!mounted) return;
+            return;
+          }
+
           const [brandContextData, productsData, conceptsData, metaAdsData] = await Promise.all([
-            getBrandContext(user.id),
-            getProducts(user.id),
-            getConcepts(user.id),
-            getMetaAds(user.id),
+            getBrandContext(user.id, brandId),
+            getProducts(user.id, brandId),
+            getConcepts(user.id, brandId),
+            getMetaAds(user.id, brandId),
           ]);
 
           if (!mounted) return;

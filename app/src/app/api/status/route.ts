@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { readBrandContext, readBrand, readConcepts, readKnowledge, readMetaAds, readSearchState, readAnalysis } from "@/lib/csv";
 import { getAuthenticatedUser } from "@/lib/auth-server";
-import { getBrandContext } from "@/lib/db/brand-context";
+import { getBrandContext, getMostRecentBrandId } from "@/lib/db/brand-context";
 import { getConcepts } from "@/lib/db/concepts";
 import { getMetaAds } from "@/lib/db/meta-ads";
 
@@ -9,10 +9,23 @@ export async function GET() {
   try {
     const user = await getAuthenticatedUser();
     if (user) {
+      const brandId = await getMostRecentBrandId(user.id);
+      if (!brandId) {
+        return NextResponse.json({
+          hasBrand: false,
+          hasSearch: false,
+          hasAnalysis: false,
+          competitorCount: 0,
+          metaAdCount: 0,
+          conceptCount: 0,
+          knowledgeCount: 0,
+        });
+      }
+
       const [brandContext, concepts, metaAds] = await Promise.all([
-        getBrandContext(user.id),
-        getConcepts(user.id),
-        getMetaAds(user.id),
+        getBrandContext(user.id, brandId),
+        getConcepts(user.id, brandId),
+        getMetaAds(user.id, brandId),
       ]);
 
       return NextResponse.json({

@@ -1,12 +1,26 @@
 import { createClient } from "@/lib/supabase/client";
 import { BrandContext } from "@/lib/types";
 
-export async function getBrandContext(userId: string): Promise<BrandContext | null> {
+export async function listBrandContexts(userId: string) {
   const supabase = createClient();
-  
+
   const { data, error } = await supabase
     .from("brand_contexts")
-    .select("*")
+    .select("id, name, url, updated_at")
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false });
+
+  if (error) throw error;
+
+  return data || [];
+}
+
+export async function getMostRecentBrandId(userId: string): Promise<string | null> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase
+    .from("brand_contexts")
+    .select("id")
     .eq("user_id", userId)
     .order("updated_at", { ascending: false })
     .limit(1)
@@ -17,18 +31,29 @@ export async function getBrandContext(userId: string): Promise<BrandContext | nu
     throw error;
   }
 
+  return data.id;
+}
+
+export async function getBrandContext(userId: string, brandContextId: string): Promise<BrandContext | null> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase
+    .from("brand_contexts")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("id", brandContextId)
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116") return null; // No rows found
+    throw error;
+  }
+
   return data.raw_data as BrandContext;
 }
 
-export async function saveBrandContext(userId: string, context: BrandContext): Promise<void> {
+export async function saveBrandContext(userId: string, context: BrandContext): Promise<{ brandId: string }> {
   const supabase = createClient();
-
-  // Check if user already has a brand context
-  const { data: existing } = await supabase
-    .from("brand_contexts")
-    .select("id")
-    .eq("user_id", userId)
-    .single();
 
   const contextData = {
     user_id: userId,
@@ -42,22 +67,16 @@ export async function saveBrandContext(userId: string, context: BrandContext): P
     updated_at: new Date().toISOString(),
   };
 
-  if (existing) {
-    // Update existing
-    const { error } = await supabase
-      .from("brand_contexts")
-      .update(contextData)
-      .eq("id", existing.id);
+  // Always insert a new brand context
+  const { data, error } = await supabase
+    .from("brand_contexts")
+    .insert(contextData)
+    .select("id")
+    .single();
 
-    if (error) throw error;
-  } else {
-    // Insert new
-    const { error } = await supabase
-      .from("brand_contexts")
-      .insert(contextData);
+  if (error) throw error;
 
-    if (error) throw error;
-  }
+  return { brandId: data.id };
 }
 
 export async function deleteBrandContext(userId: string): Promise<void> {

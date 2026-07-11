@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readBrandContext, writeBrandContext, readProducts } from "@/lib/csv";
 import { BrandContext } from "@/lib/types";
 import { getAuthenticatedUser } from "@/lib/auth-server";
-import { getBrandContext, saveBrandContext } from "@/lib/db/brand-context";
+import { getBrandContext, saveBrandContext, getMostRecentBrandId } from "@/lib/db/brand-context";
 import { getProducts } from "@/lib/db/products";
 import fs from "fs";
 import path from "path";
@@ -49,9 +49,14 @@ export async function GET() {
   }
 
   // User-scoped data from Supabase
-  const brandContext = await getBrandContext(user.id);
-  const products = await getProducts(user.id);
-  
+  const brandId = await getMostRecentBrandId(user.id);
+  if (!brandId) {
+    return NextResponse.json({ brandContext: null, products: [], assets: [] });
+  }
+
+  const brandContext = await getBrandContext(user.id, brandId);
+  const products = await getProducts(user.id, brandId);
+
   // Assets still stored in file system (user-specific folder could be added later)
   let assets: string[] = [];
   const assetsDir = path.join(DATA_DIR, "brand-assets");
@@ -98,15 +103,24 @@ export async function PUT(req: NextRequest) {
   }
 
   // User-scoped save to Supabase
-  const existing = await getBrandContext(user.id);
+  const existingBrandId = await getMostRecentBrandId(user.id);
+  let existing = null;
+  if (existingBrandId) {
+    existing = await getBrandContext(user.id, existingBrandId);
+  }
   const brandChanged = !existing || existing.name !== ctx.name || existing.url !== ctx.url;
 
-  await saveBrandContext(user.id, ctx);
+  const { brandId } = await saveBrandContext(user.id, ctx);
 
   // Clear downstream data is still file-based for now
   if (brandChanged) {
     clearDownstreamData();
   }
 
-  return NextResponse.json({ success: true, brandContext: ctx, downstreamCleared: brandChanged });
+  return NextResponse.json({
+    success: true,
+    brandContext: ctx,
+    brandId,
+    downstreamCleared: brandChanged
+  });
 }

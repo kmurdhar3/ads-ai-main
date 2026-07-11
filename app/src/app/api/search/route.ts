@@ -56,14 +56,18 @@ export async function POST(req: NextRequest) {
   if (action === "suggest-keywords") {
     const user = await getAuthenticatedUser();
     let brandContext = null;
-    
+
     if (user) {
-      const { getBrandContext } = await import("@/lib/db/brand-context");
-      brandContext = await getBrandContext(user.id);
+      const { getBrandContext, getMostRecentBrandId } = await import("@/lib/db/brand-context");
+      const brandId = await getMostRecentBrandId(user.id);
+      if (!brandId) {
+        return NextResponse.json({ error: "No brand context found" }, { status: 400 });
+      }
+      brandContext = await getBrandContext(user.id, brandId);
     } else {
       brandContext = readBrandContext();
     }
-    
+
     if (!brandContext) {
       return NextResponse.json({ error: "No brand context found" }, { status: 400 });
     }
@@ -77,6 +81,17 @@ export async function POST(req: NextRequest) {
 
     if (keywords.length === 0) {
       return NextResponse.json({ error: "No keywords provided" }, { status: 400 });
+    }
+
+    // Get brandId for authenticated users
+    const user = await getAuthenticatedUser();
+    let brandId: string | null = null;
+    if (user) {
+      const { getMostRecentBrandId } = await import("@/lib/db/brand-context");
+      brandId = await getMostRecentBrandId(user.id);
+      if (!brandId) {
+        return NextResponse.json({ error: "No brand context found" }, { status: 400 });
+      }
     }
 
     const encoder = new TextEncoder();
@@ -195,10 +210,9 @@ export async function POST(req: NextRequest) {
         }
 
             if (allMetaAds.length > 0) {
-              const user = await getAuthenticatedUser();
-              if (user) {
+              if (user && brandId) {
                 // Persist meta-ads and search result into Supabase
-                await saveMetaAds(user.id, allMetaAds);
+                await saveMetaAds(user.id, brandId, allMetaAds);
 
                 try {
                   const supabase = createServerClient(

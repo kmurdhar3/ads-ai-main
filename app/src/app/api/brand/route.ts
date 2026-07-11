@@ -54,17 +54,30 @@ function clearDownstreamData() {
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   // Prefer authenticated user data from Supabase when available
   try {
     const { getAuthenticatedUser } = await import("@/lib/auth-server");
     const user = await getAuthenticatedUser();
 
     if (user) {
-      const { getBrandContext } = await import("@/lib/db/brand-context");
+      const { getBrandContext, getMostRecentBrandId } = await import("@/lib/db/brand-context");
       const { getProducts } = await import("@/lib/db/products");
-      const brandContext = await getBrandContext(user.id);
-      const products = await getProducts(user.id);
+
+      // Accept ?brandId= query param with fallback to most recent
+      const { searchParams } = new URL(req.url);
+      let brandId = searchParams.get("brandId");
+
+      if (!brandId) {
+        brandId = await getMostRecentBrandId(user.id);
+      }
+
+      if (!brandId) {
+        return NextResponse.json({ brand: null, brandContext: null, products: [], assets: [] });
+      }
+
+      const brandContext = await getBrandContext(user.id, brandId);
+      const products = await getProducts(user.id, brandId);
 
       let assets: string[] = [];
       const assetsDir = path.join(DATA_DIR, "brand-assets");
@@ -147,8 +160,8 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       const errors: string[] = [];
 
-      function emit(step: string, message: string, progress: number) {
-        const data = JSON.stringify({ step, message, progress, errors: [...errors] });
+      function emit(step: string, message: string, progress: number, extra?: Record<string, any>) {
+        const data = JSON.stringify({ step, message, progress, errors: [...errors], ...extra });
         controller.enqueue(encoder.encode(`data: ${data}\n\n`));
       }
 
@@ -315,12 +328,14 @@ export async function POST(req: NextRequest) {
           collectedAt: new Date().toISOString(),
           collectedBy: "web-form",
         };
+        let savedBrandId: string | null = null;
         if (user) {
           const { saveBrandContext } = await import("@/lib/db/brand-context");
           const { saveProducts } = await import("@/lib/db/products");
 
-          await saveBrandContext(user.id, brandContext);
-          await saveProducts(user.id, products);
+          const { brandId } = await saveBrandContext(user.id, brandContext);
+          savedBrandId = brandId;
+          await saveProducts(user.id, brandId, products);
         } else {
           // Write legacy CSV
           await writeBrand(brand);
@@ -333,7 +348,8 @@ export async function POST(req: NextRequest) {
         emit(
           "done",
           `Brand profile saved: ${brand.name} (${products.length} products)`,
-          100
+          100,
+          { brandId: savedBrandId }
         );
       } catch (e) {
         emit("error", `Brand scraping failed: ${e}`, 0);

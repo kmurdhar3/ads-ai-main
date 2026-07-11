@@ -3,7 +3,7 @@ import { readAnalysis, writeAnalysis, readMetaAds, readBrandContext } from "@/li
 import { analyzeWinningPatterns } from "@/lib/claude";
 import { getAuthenticatedUser } from "@/lib/auth-server";
 import { getMetaAds } from "@/lib/db/meta-ads";
-import { getBrandContext } from "@/lib/db/brand-context";
+import { getBrandContext, getMostRecentBrandId } from "@/lib/db/brand-context";
 import { createServerClient } from "@supabase/ssr";
 
 export const maxDuration = 120;
@@ -43,8 +43,12 @@ export async function POST() {
   let metaAds = [];
 
   if (user) {
-    brandContext = await getBrandContext(user.id);
-    metaAds = await getMetaAds(user.id);
+    const brandId = await getMostRecentBrandId(user.id);
+    if (!brandId) {
+      return NextResponse.json({ error: "No brand context found" }, { status: 400 });
+    }
+    brandContext = await getBrandContext(user.id, brandId);
+    metaAds = await getMetaAds(user.id, brandId);
   } else {
     brandContext = readBrandContext();
     metaAds = readMetaAds();

@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { readBrandContext, readBrand, readProducts, readKnowledge, readMetaAds, readKnowledgeMarkdown, readAnalysis, writeConcepts } from "@/lib/csv";
 import { getAuthenticatedUser } from "@/lib/auth-server";
-import { getBrandContext } from "@/lib/db/brand-context";
+import { getBrandContext, getMostRecentBrandId } from "@/lib/db/brand-context";
 import { getProducts } from "@/lib/db/products";
 import { getMetaAds } from "@/lib/db/meta-ads";
 import { createServerClient } from "@supabase/ssr";
@@ -77,8 +77,16 @@ export async function POST(req: NextRequest) {
 
   let brandContext = null;
   let legacyBrand = null;
+  let brandId: string | null = null;
   if (user) {
-    brandContext = await getBrandContext(user.id);
+    brandId = await getMostRecentBrandId(user.id);
+    if (!brandId) {
+      return new Response(JSON.stringify({ error: "No brand profile found" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    brandContext = await getBrandContext(user.id, brandId);
   } else {
     legacyBrand = readBrand();
     brandContext = readBrandContext();
@@ -93,8 +101,8 @@ export async function POST(req: NextRequest) {
     });
   }
   let products = [];
-  if (user) {
-    products = await getProducts(user.id);
+  if (user && brandId) {
+    products = await getProducts(user.id, brandId);
   } else {
     products = readProducts();
   }
@@ -105,8 +113,8 @@ export async function POST(req: NextRequest) {
 
   const knowledge = readKnowledge();
   let metaAds = [];
-  if (user) {
-    metaAds = await getMetaAds(user.id);
+  if (user && brandId) {
+    metaAds = await getMetaAds(user.id, brandId);
   } else {
     metaAds = readMetaAds();
   }
@@ -325,7 +333,7 @@ export async function POST(req: NextRequest) {
         } catch (e) {
           // fallback: save individually
           for (const c of allConcepts) {
-            try { await saveConcept(user.id, c); } catch {}
+            try { await saveConcept(user.id, brandId!, c); } catch {}
           }
         }
       } else {

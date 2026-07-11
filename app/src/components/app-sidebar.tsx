@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Sparkles, Search, BookOpen, Building2, CheckCircle, TrendingUp } from "lucide-react";
+import { Sparkles, Search, BookOpen, Building2, CheckCircle, TrendingUp, ChevronDown, Plus } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -16,6 +16,14 @@ import {
   SidebarFooter,
 } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useBrand } from "@/context/brand-context";
 import Image from "next/image";
 
 const stepItems = [
@@ -39,6 +47,7 @@ interface StepStatus {
 export function AppSidebar() {
   const pathname = usePathname();
   const [status, setStatus] = useState<StepStatus | null>(null);
+  const { activeBrandId, brands, switchBrand, createBrand } = useBrand();
 
   useEffect(() => {
     fetch("/api/status")
@@ -56,14 +65,16 @@ export function AppSidebar() {
     return false;
   }
 
+  const activeBrand = brands.find((b) => b.id === activeBrandId);
+
   return (
     <Sidebar className="border-r border-white/[0.06]">
       <SidebarHeader className="px-5 py-6">
   <div className="flex items-center gap-3">
     <div className="flex h-9 w-9 items-center justify-center rounded-xl overflow-hidden">
-      <Image 
-        src="/logo_2.png" 
-        alt="AdLaunch AI Logo" 
+      <Image
+        src="/logo_2.png"
+        alt="AdLaunch AI Logo"
         width={36}
         height={36}
         unoptimized
@@ -77,6 +88,53 @@ export function AppSidebar() {
   </div>
 </SidebarHeader>
       <SidebarContent className="px-3">
+        {/* Brand Switcher */}
+        {brands.length > 0 && (
+          <>
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <DropdownMenu>
+                  <DropdownMenuTrigger className="w-full">
+                    <div className="flex items-center justify-between w-full rounded-xl border border-white/[0.1] bg-white/[0.02] px-3 py-2.5 text-left hover:bg-white/[0.05] transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[11px] text-muted-foreground mb-0.5">Active Brand</p>
+                        <p className="text-[13px] font-medium truncate">
+                          {activeBrand ? activeBrand.name : "Select Brand"}
+                        </p>
+                      </div>
+                      <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                    </div>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-[240px]">
+                    {brands.map((brand) => (
+                      <DropdownMenuItem
+                        key={brand.id}
+                        onClick={() => switchBrand(brand.id)}
+                        className="cursor-pointer"
+                      >
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-medium">{brand.name}</span>
+                          {brand.url && (
+                            <span className="text-xs text-muted-foreground truncate">
+                              {brand.url}
+                            </span>
+                          )}
+                        </div>
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={createBrand} className="cursor-pointer">
+                      <Plus className="h-4 w-4 mr-2" />
+                      <span>New Brand</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+            <Separator className="mx-2 my-3 bg-white/[0.06]" />
+          </>
+        )}
+
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>

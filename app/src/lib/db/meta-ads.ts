@@ -1,13 +1,14 @@
 import { createClient } from "@/lib/supabase/client";
 import { MetaAdEntry } from "@/lib/types";
 
-export async function getMetaAds(userId: string): Promise<MetaAdEntry[]> {
+export async function getMetaAds(userId: string, brandContextId: string): Promise<MetaAdEntry[]> {
   const supabase = createClient();
 
   const { data, error } = await supabase
     .from("meta_ads")
     .select("*")
     .eq("user_id", userId)
+    .eq("brand_context_id", brandContextId)
     .order("days_running", { ascending: false });
 
   if (error) throw error;
@@ -31,25 +32,27 @@ export async function getMetaAds(userId: string): Promise<MetaAdEntry[]> {
   }));
 }
 
-export async function saveMetaAds(userId: string, ads: MetaAdEntry[]): Promise<void> {
+export async function saveMetaAds(userId: string, brandContextId: string, ads: MetaAdEntry[]): Promise<void> {
   const supabase = createClient();
 
   if (ads.length === 0) return;
 
-  // Get search result id
+  // Get search result id for this brand context
   const { data: searchResult } = await supabase
     .from("search_results")
     .select("id")
     .eq("user_id", userId)
+    .eq("brand_context_id", brandContextId)
     .order("searched_at", { ascending: false })
     .limit(1)
     .single();
 
-  // Delete existing ads
+  // Delete existing ads for this brand context
   await supabase
     .from("meta_ads")
     .delete()
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("brand_context_id", brandContextId);
 
   // Insert new ads
   const { error } = await supabase
@@ -58,6 +61,7 @@ export async function saveMetaAds(userId: string, ads: MetaAdEntry[]): Promise<v
       ads.map((ad) => ({
         id: ad.id,
         search_result_id: searchResult?.id || null,
+        brand_context_id: brandContextId,
         user_id: userId,
         advertiser: ad.advertiser,
         headline: ad.headline || "",
@@ -78,13 +82,14 @@ export async function saveMetaAds(userId: string, ads: MetaAdEntry[]): Promise<v
   if (error) throw error;
 }
 
-export async function deleteMetaAds(userId: string): Promise<void> {
+export async function deleteMetaAds(userId: string, brandContextId: string): Promise<void> {
   const supabase = createClient();
 
   const { error } = await supabase
     .from("meta_ads")
     .delete()
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("brand_context_id", brandContextId);
 
   if (error) throw error;
 }

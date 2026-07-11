@@ -1,13 +1,14 @@
 import { createClient } from "@/lib/supabase/client";
 import { AdConcept } from "@/lib/types";
 
-export async function getConcepts(userId: string): Promise<AdConcept[]> {
+export async function getConcepts(userId: string, brandContextId: string): Promise<AdConcept[]> {
   const supabase = createClient();
 
   const { data, error } = await supabase
     .from("concepts")
     .select("*")
     .eq("user_id", userId)
+    .eq("brand_context_id", brandContextId)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
@@ -37,23 +38,13 @@ export async function getConcepts(userId: string): Promise<AdConcept[]> {
   }));
 }
 
-export async function saveConcept(userId: string, concept: AdConcept): Promise<void> {
+export async function saveConcept(userId: string, brandContextId: string, concept: AdConcept): Promise<void> {
   const supabase = createClient();
-
-  const { data: brandContext } = await supabase
-    .from("brand_contexts")
-    .select("id")
-    .eq("user_id", userId)
-    .single();
-
-  if (!brandContext) {
-    throw new Error("Brand context not found");
-  }
 
   const { error } = await supabase
     .from("concepts")
     .insert({
-      brand_context_id: brandContext.id,
+      brand_context_id: brandContextId,
       user_id: userId,
       headline: concept.headline,
       body: concept.body,
@@ -91,13 +82,14 @@ export async function updateConceptStar(userId: string, conceptId: string, starr
   if (error) throw error;
 }
 
-export async function deleteConcepts(userId: string): Promise<void> {
+export async function deleteConcepts(userId: string, brandContextId: string): Promise<void> {
   const supabase = createClient();
 
   const { error } = await supabase
     .from("concepts")
     .delete()
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("brand_context_id", brandContextId);
 
   if (error) throw error;
 }
