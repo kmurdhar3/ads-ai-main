@@ -7,7 +7,7 @@ import { getBrandContext, getMostRecentBrandId } from "@/lib/db/brand-context";
 import { getProducts } from "@/lib/db/products";
 import { getMetaAds } from "@/lib/db/meta-ads";
 import { createServerClient } from "@supabase/ssr";
-import { saveConcept } from "@/lib/db/concepts";
+import { saveConcept, createConceptBatch, updateConceptBatchStats } from "@/lib/db/concepts";
 import { generateReplicaAdConcept } from "@/lib/claude";
 import { evaluateCreative } from "@/lib/quality-control";
 import { generateAdImage } from "@/lib/kie-ai";
@@ -165,6 +165,17 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const allConcepts: AdConcept[] = [];
 
+  // Phase 3: Create batch record before generation
+  let batchId: string | null = null;
+  if (user && brandId) {
+    try {
+      const selectedProductNames = products.map(p => p.name);
+      batchId = await createConceptBatch(user.id, brandId, selectedProductNames, count);
+    } catch (e) {
+      console.error("Failed to create batch:", e);
+    }
+  }
+
   const stream = new ReadableStream({
     async start(controller) {
       function send(data: Record<string, unknown>) {
@@ -308,11 +319,13 @@ export async function POST(req: NextRequest) {
 
           const rows = allConcepts.map((c) => ({
             user_id: user.id,
+            brand_context_id: brandId!,
             headline: c.headline,
             body: c.body,
             description: c.description || "",
             cta_text: c.ctaText || "",
             image_prompt: c.imagePrompt || "",
+            reference_image_url: c.referenceImageUrl || "",
             generated_image_url: c.generatedImageUrl || "",
             video_script: c.videoScript || "",
             ad_type: c.adType || "static",
@@ -327,18 +340,32 @@ export async function POST(req: NextRequest) {
             quality_feedback: c.qualityFeedback || "",
             qc_passed: c.qcPassed !== false,
             created_at: c.createdAt || new Date().toISOString(),
+            batch_id: batchId || null,
+            parent_concept_id: null,
+            version: 1,
           }));
 
           await supabase.from("concepts").insert(rows);
         } catch (e) {
           // fallback: save individually
           for (const c of allConcepts) {
-            try { await saveConcept(user.id, brandId!, c); } catch {}
+            try { await saveConcept(user.id, brandId!, c, batchId || undefined); } catch {}
           }
         }
       } else {
         await writeConcepts(allConcepts);
       }
+
+      // Phase 3: Update batch stats with QC pass count
+      if (batchId && user) {
+        try {
+          const passedCount = allConcepts.filter(c => c.qcPassed !== false).length;
+          await updateConceptBatchStats(batchId, passedCount);
+        } catch (e) {
+          console.error("Failed to update batch stats:", e);
+        }
+      }
+
       const elapsed = Math.round((Date.now() - startTime) / 1000);
       send({ type: "complete", total: allConcepts.length, elapsedSeconds: elapsed });
       controller.close();

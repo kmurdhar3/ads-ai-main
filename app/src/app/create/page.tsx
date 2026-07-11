@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useAuth } from "@/context/auth-context";
 import { Sparkles, Star, Loader2, ArrowRight, ChevronRight, Clock, FileText, Film, Lightbulb, Target, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +35,7 @@ interface AdConcept {
   ctaText: string;
   imagePrompt: string;
   generatedImageUrl: string;
+  referenceImageUrl?: string;
   targetAudience: string;
   format: string;
   placements: string;
@@ -49,6 +49,17 @@ interface AdConcept {
   qcPassed?: boolean;
   adType?: "static" | "video";
   videoScript?: string;
+  batchId?: string;
+  parentConceptId?: string;
+  version?: number;
+}
+
+interface ConceptBatch {
+  id: string;
+  createdAt: string;
+  productNames: string[];
+  requestedCount: number;
+  passedCount: number;
 }
 
 interface MetaAdEntry {
@@ -80,6 +91,8 @@ export default function CreatePage() {
   const [brand, setBrand] = useState<Brand | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [concepts, setConcepts] = useState<AdConcept[]>([]);
+  const [batches, setBatches] = useState<ConceptBatch[]>([]);
+  const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
   const [metaAds, setMetaAds] = useState<MetaAdEntry[]>([]);
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0, message: "" });
@@ -108,82 +121,38 @@ export default function CreatePage() {
   // Configurable controls
   const [conceptCount, setConceptCount] = useState(10);
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
-  const auth = useAuth();
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        // If logged-in, load directly from Supabase DB helpers for correct user scoping
-        const user = auth.user ?? null;
+        // Use API endpoints for both authenticated and anonymous users
+        const [brandData, conceptsData, statusData, metaAdsData, batchesData] = await Promise.all([
+          fetch("/api/brand").then((r) => r.json()).catch(() => null),
+          fetch("/api/create").then((r) => r.json()).catch(() => []),
+          fetch("/api/status").then((r) => r.json()).catch(() => null),
+          fetch("/api/competitors?type=meta-ads").then((r) => r.json()).catch(() => []),
+          fetch("/api/batches").then((r) => r.json()).catch(() => []),
+        ]);
 
-        if (user) {
-          const [{ getBrandContext, getMostRecentBrandId }, { getProducts }, { getConcepts }, { getMetaAds }] = await Promise.all([
-            import("@/lib/db/brand-context"),
-            import("@/lib/db/products"),
-            import("@/lib/db/concepts"),
-            import("@/lib/db/meta-ads"),
-          ]);
-
-          const brandId = await getMostRecentBrandId(user.id);
-          if (!brandId) {
-            if (!mounted) return;
-            return;
-          }
-
-          const [brandContextData, productsData, conceptsData, metaAdsData] = await Promise.all([
-            getBrandContext(user.id, brandId),
-            getProducts(user.id, brandId),
-            getConcepts(user.id, brandId),
-            getMetaAds(user.id, brandId),
-          ]);
-
-          if (!mounted) return;
-          const brand = brandContextData
-            ? {
-                name: brandContextData.name,
-                url: brandContextData.url || "",
-                description: brandContextData.description,
-                tagline: brandContextData.tagline || "",
-                products: "",
-                colors: brandContextData.colors || "",
-                logoUrl: brandContextData.logoUrl || "",
-                faviconUrl: brandContextData.faviconUrl || "",
-                style: brandContextData.style || "",
-                instagramHandle: brandContextData.instagramHandle || "",
-                instagramFollowers: String(brandContextData.instagramFollowers || ""),
-                instagramProfilePicUrl: brandContextData.instagramProfilePicUrl || "",
-              }
-            : null;
-
-          setBrand(brand);
-          setBrandContext(brandContextData || null);
-          setProducts(productsData || []);
-          setConcepts(Array.isArray(conceptsData) ? conceptsData : []);
-          setMetaAds(Array.isArray(metaAdsData) ? metaAdsData : []);
-          
-          if (!brandContextData) setShowSetup(true);
+        if (!mounted) return;
+        if (brandData) {
+          setBrand(brandData.brand);
+          setBrandContext(brandData.brandContext || null);
+          setProducts(brandData.products || []);
+          if (!brandData.brand && !brandData.brandContext) setShowSetup(true);
         } else {
-          // Anonymous: use legacy API endpoints
-          const [brandData, conceptsData, statusData, metaAdsData] = await Promise.all([
-            fetch("/api/brand").then((r) => r.json()).catch(() => null),
-            fetch("/api/create").then((r) => r.json()).catch(() => []),
-            fetch("/api/status").then((r) => r.json()).catch(() => null),
-            fetch("/api/competitors?type=meta-ads").then((r) => r.json()).catch(() => []),
-          ]);
+          setShowSetup(true);
+        }
+        setConcepts(Array.isArray(conceptsData) ? conceptsData : []);
+        if (statusData) setStatus(statusData);
+        setMetaAds(Array.isArray(metaAdsData) ? metaAdsData : []);
 
-          if (!mounted) return;
-          if (brandData) {
-            setBrand(brandData.brand);
-            setBrandContext(brandData.brandContext || null);
-            setProducts(brandData.products || []);
-            if (!brandData.brand && !brandData.brandContext) setShowSetup(true);
-          } else {
-            setShowSetup(true);
-          }
-          setConcepts(Array.isArray(conceptsData) ? conceptsData : []);
-          if (statusData) setStatus(statusData);
-          setMetaAds(Array.isArray(metaAdsData) ? metaAdsData : []);
+        // Set batches and expand most recent by default
+        const batchList = Array.isArray(batchesData) ? batchesData : [];
+        setBatches(batchList);
+        if (batchList.length > 0) {
+          setExpandedBatches(new Set([batchList[0].id]));
         }
       } catch (e) {
         console.error("Failed to load initial data:", e);
@@ -287,6 +256,35 @@ export default function CreatePage() {
     );
   }
 
+  async function handleRegenerate(conceptId: string) {
+    if (!confirm("Regenerate this concept? This will create a new version.")) return;
+
+    setGenerating(true);
+    try {
+      const res = await fetch("/api/create/regenerate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conceptId }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Regeneration failed");
+      }
+
+      const newConcept = await res.json();
+      setConcepts((prev) => [newConcept, ...prev]);
+
+      // Reload batches to update stats
+      const batchesData = await fetch("/api/batches").then((r) => r.json()).catch(() => []);
+      setBatches(Array.isArray(batchesData) ? batchesData : []);
+    } catch (e) {
+      console.error("Regeneration failed:", e);
+      alert("Failed to regenerate concept. Please try again.");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   function getReferenceAd(concept: AdConcept): MetaAdEntry | null {
     if (!concept.inspirationAdIds) return null;
     const firstId = concept.inspirationAdIds.split(",")[0].trim();
@@ -323,6 +321,40 @@ export default function CreatePage() {
   }
 
   const filteredConcepts = concepts;
+
+  // Group concepts by batch
+  const conceptsByBatch = new Map<string | null, AdConcept[]>();
+  for (const concept of concepts) {
+    const key = concept.batchId || null;
+    if (!conceptsByBatch.has(key)) {
+      conceptsByBatch.set(key, []);
+    }
+    conceptsByBatch.get(key)!.push(concept);
+  }
+
+  const earlierConcepts = conceptsByBatch.get(null) || [];
+
+  const toggleBatch = (batchId: string) => {
+    setExpandedBatches((prev) => {
+      const next = new Set(prev);
+      if (next.has(batchId)) {
+        next.delete(batchId);
+      } else {
+        next.add(batchId);
+      }
+      return next;
+    });
+  };
+
+  const formatBatchDate = (isoDate: string) => {
+    const date = new Date(isoDate);
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  };
 
   return (
     <div className="space-y-8">
@@ -418,16 +450,48 @@ export default function CreatePage() {
         })()}
       </div>
 
-      {/* Generated Concepts — Side by Side */}
+      {/* Batch Timeline */}
       {concepts.length > 0 && (
-        <div className="space-y-6">
-          <h3 className="text-lg font-semibold">
-            {filteredConcepts.length} Ad Concept{filteredConcepts.length !== 1 ? "s" : ""}
-          </h3>
+        <div className="space-y-4">
+          {/* Recent Batches */}
+          {batches.map((batch) => {
+            const batchConcepts = conceptsByBatch.get(batch.id) || [];
+            const isExpanded = expandedBatches.has(batch.id);
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {filteredConcepts.map((concept, idx) => {
-              const refAd = getReferenceAd(concept);
+            return (
+              <div key={batch.id} className="glass rounded-xl overflow-hidden">
+                {/* Batch Header */}
+                <button
+                  onClick={() => toggleBatch(batch.id)}
+                  className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/[0.02] transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <ChevronRight
+                      className={`h-4 w-4 text-muted-foreground transition-transform ${
+                        isExpanded ? "rotate-90" : ""
+                      }`}
+                    />
+                    <span className="text-sm font-medium">{formatBatchDate(batch.createdAt)}</span>
+                    <Badge variant="secondary" className="text-[10px]">
+                      {batchConcepts.length} concept{batchConcepts.length !== 1 ? "s" : ""}
+                    </Badge>
+                    <Badge variant="secondary" className="text-[10px] bg-green-500/10 text-green-400 border-green-500/20">
+                      {batch.passedCount} passed
+                    </Badge>
+                    {batch.productNames.map((name) => (
+                      <Badge key={name} variant="secondary" className="text-[10px] bg-purple-500/10 text-purple-300 border-purple-500/20">
+                        {name}
+                      </Badge>
+                    ))}
+                  </div>
+                </button>
+
+                {/* Batch Concepts Grid */}
+                {isExpanded && batchConcepts.length > 0 && (
+                  <div className="p-4 pt-0 border-t border-white/[0.06]">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
+                      {batchConcepts.map((concept, idx) => {
+                        const refAd = getReferenceAd(concept);
 
               return (
                 <div key={concept.id} className="glass rounded-2xl overflow-hidden">
@@ -447,6 +511,11 @@ export default function CreatePage() {
                             : "bg-white/[0.06] text-muted-foreground"
                         }`}>
                           {concept.adType === "video" ? "Video" : "Static"}
+                        </Badge>
+                      )}
+                      {concept.parentConceptId && (
+                        <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-400">
+                          v{concept.version || 2} · regenerated
                         </Badge>
                       )}
                     </div>
@@ -571,13 +640,203 @@ export default function CreatePage() {
                       <Lightbulb className="h-3.5 w-3.5 text-amber-400" />
                       <span>Strategy</span>
                     </button>
+                    <button
+                      onClick={() => handleRegenerate(concept.id)}
+                      disabled={generating}
+                      className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium glass border-white/[0.06] hover:bg-white/[0.06] hover:border-white/[0.12] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-green-400" />
+                      <span>Regenerate</span>
+                    </button>
                   </div>
                 </div>
               );
             })}
-          </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
-          {/* Detail Modal */}
+          {/* Earlier Concepts (batch_id IS NULL) */}
+          {earlierConcepts.length > 0 && (
+            <div className="glass rounded-xl overflow-hidden">
+              <button
+                onClick={() => toggleBatch("earlier")}
+                className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/[0.02] transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <ChevronRight
+                    className={`h-4 w-4 text-muted-foreground transition-transform ${
+                      expandedBatches.has("earlier") ? "rotate-90" : ""
+                    }`}
+                  />
+                  <span className="text-sm font-medium">Earlier concepts</span>
+                  <Badge variant="secondary" className="text-[10px]">
+                    {earlierConcepts.length} concept{earlierConcepts.length !== 1 ? "s" : ""}
+                  </Badge>
+                </div>
+              </button>
+
+              {expandedBatches.has("earlier") && (
+                <div className="p-4 pt-0 border-t border-white/[0.06]">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
+                    {earlierConcepts.map((concept, idx) => {
+                      const refAd = getReferenceAd(concept);
+
+                      return (
+                        <div key={concept.id} className="glass rounded-2xl overflow-hidden">
+                          {/* Header */}
+                          <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.06]">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-xs font-mono text-muted-foreground">#{idx + 1}</span>
+                              {concept.productName && (
+                                <Badge variant="secondary" className="text-[10px] bg-purple-500/10 text-purple-300 border-purple-500/20">
+                                  {concept.productName}
+                                </Badge>
+                              )}
+                              {concept.adType && (
+                                <Badge variant="secondary" className={`text-[10px] ${
+                                  concept.adType === "video"
+                                    ? "bg-blue-500/15 text-blue-400 border-blue-500/20"
+                                    : "bg-white/[0.06] text-muted-foreground"
+                                }`}>
+                                  {concept.adType === "video" ? "Video" : "Static"}
+                                </Badge>
+                              )}
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => handleStar(concept.id, !concept.starred)}
+                            >
+                              <Star
+                                className={`h-4 w-4 ${concept.starred ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`}
+                              />
+                            </Button>
+                          </div>
+
+                          {/* Visual comparison */}
+                          <div className="flex flex-row items-stretch p-3 gap-0">
+                            {refAd && (
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 mb-1.5 px-1">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                    Ref
+                                  </span>
+                                  {refAd.daysRunning > 0 && (
+                                    <span className={`text-[10px] font-medium flex items-center gap-1 ${
+                                      refAd.daysRunning >= 30 ? "text-amber-400" : "text-muted-foreground"
+                                    }`}>
+                                      · {refAd.daysRunning}d
+                                    </span>
+                                  )}
+                                  <a
+                                    href={`https://www.facebook.com/ads/library/?id=${refAd.id}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[10px] font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 ml-auto"
+                                  >
+                                    <ExternalLink className="h-2.5 w-2.5" />
+                                  </a>
+                                </div>
+                                <MetaAdCard
+                                  adId={refAd.id}
+                                  localImagePath={refAd.localImagePath || undefined}
+                                  imageUrl={!refAd.localImagePath ? refAd.imageUrl : undefined}
+                                  videoUrl={refAd.videoUrl || undefined}
+                                  primaryText={refAd.primaryText}
+                                  headline={refAd.headline}
+                                  description={refAd.description}
+                                  ctaText={refAd.ctaText}
+                                  platforms={refAd.platforms}
+                                  daysRunning={refAd.daysRunning}
+                                  isActive={refAd.isActive}
+                                  showCopy={false}
+                                  variant="full"
+                                />
+                              </div>
+                            )}
+
+                            {refAd && (
+                              <div className="flex items-center justify-center px-2 flex-shrink-0">
+                                <svg width="44" height="24" viewBox="0 0 44 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                  <defs>
+                                    <linearGradient id={`arrow-grad-earlier-${idx}`} x1="0" y1="12" x2="44" y2="12" gradientUnits="userSpaceOnUse">
+                                      <stop offset="0%" stopColor="rgb(168 85 247)" stopOpacity="0.1" />
+                                      <stop offset="40%" stopColor="rgb(168 85 247)" stopOpacity="0.6" />
+                                      <stop offset="100%" stopColor="rgb(139 92 246)" stopOpacity="1" />
+                                    </linearGradient>
+                                  </defs>
+                                  <line x1="0" y1="12" x2="30" y2="12" stroke={`url(#arrow-grad-earlier-${idx})`} strokeWidth="2.5" strokeLinecap="round" />
+                                  <path d="M27 5 L38 12 L27 19" stroke="rgb(139 92 246)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                                </svg>
+                              </div>
+                            )}
+
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-1.5 px-1">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-purple-400">
+                                  Yours
+                                </p>
+                                {concept.adType === "video" && (
+                                  <span className="text-[9px] font-medium uppercase tracking-wider text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded">
+                                    Video
+                                  </span>
+                                )}
+                              </div>
+                              <MetaAdCard
+                                imageSrc={concept.generatedImageUrl || undefined}
+                                primaryText={concept.body}
+                                headline={concept.headline}
+                                description={concept.description}
+                                ctaText={concept.ctaText}
+                                platforms={concept.placements}
+                                showCopy={false}
+                                variant="full"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Glass action buttons */}
+                          <div className="px-4 pb-4 flex flex-wrap gap-2">
+                            <button
+                              onClick={() => setDetailModal({ concept, section: "copy" })}
+                              className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium glass border-white/[0.06] hover:bg-white/[0.06] hover:border-white/[0.12] transition-all duration-200"
+                            >
+                              <FileText className="h-3.5 w-3.5 text-purple-400" />
+                              <span>Copy</span>
+                            </button>
+                            {concept.videoScript && (
+                              <button
+                                onClick={() => setDetailModal({ concept, section: "script" })}
+                                className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium glass border-white/[0.06] hover:bg-white/[0.06] hover:border-white/[0.12] transition-all duration-200"
+                              >
+                                <Film className="h-3.5 w-3.5 text-blue-400" />
+                                <span>Script</span>
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setDetailModal({ concept, section: "strategy" })}
+                              className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium glass border-white/[0.06] hover:bg-white/[0.06] hover:border-white/[0.12] transition-all duration-200"
+                            >
+                              <Lightbulb className="h-3.5 w-3.5 text-amber-400" />
+                              <span>Strategy</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Detail Modal */}
           <Dialog open={!!detailModal} onOpenChange={(open) => { if (!open) setDetailModal(null); }}>
             <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden glass-strong rounded-2xl border-white/[0.08] p-0 gap-0">
               <DialogTitle className="sr-only">
@@ -712,8 +971,6 @@ export default function CreatePage() {
               })()}
             </DialogContent>
           </Dialog>
-        </div>
-      )}
     </div>
   );
 }

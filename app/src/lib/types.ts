@@ -160,6 +160,9 @@ export interface AdConcept {
   qcPassed?: boolean;
   adType?: "static" | "video";
   videoScript?: string;
+  batchId?: string;
+  parentConceptId?: string;
+  version?: number;
 }
 
 export interface MetaAdEntry {
