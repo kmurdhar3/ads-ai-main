@@ -7,9 +7,10 @@ import { TopBar } from "@/components/top-bar";
 
 export function LayoutContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  
+
   // Pages that should not show sidebar/topbar
-  const isAuthPage = pathname === "/login" || pathname === "/signup";
+  const publicMarketingPaths = ["/", "/pricing", "/how-it-works", "/landing", "/login", "/signup"];
+  const isAuthPage = publicMarketingPaths.includes(pathname);
 
   if (isAuthPage) {
     return <>{children}</>;

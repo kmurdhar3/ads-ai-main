@@ -1,13 +1,8 @@
-import { getAuthenticatedUser } from "@/lib/auth-server";
-import { redirect } from "next/navigation";
 import { MarketingNav } from "@/components/marketing/nav";
 import { MarketingFooter } from "@/components/marketing/footer";
 import { MarketingHome } from "@/components/marketing/home";
 
-export default async function RootPage() {
-  const user = await getAuthenticatedUser();
-  if (user) redirect("/create");
-
+export default function LandingPage() {
   return (
     <div className="min-h-screen bg-black">
       <MarketingNav />

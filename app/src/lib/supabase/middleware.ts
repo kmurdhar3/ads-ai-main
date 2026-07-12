@@ -41,9 +41,10 @@ export async function updateSession(request: NextRequest) {
     console.error('Supabase auth.getUser() failed in middleware:', err)
     // Fall through with user = null rather than crashing the whole request
   }
-
+const publicPaths = ["/", "/pricing", "/how-it-works", "/landing"]
   if (
     !user &&
+    !publicPaths.includes(request.nextUrl.pathname) &&
     !request.nextUrl.pathname.startsWith('/login') &&
     !request.nextUrl.pathname.startsWith('/signup') &&
     !request.nextUrl.pathname.startsWith('/auth')

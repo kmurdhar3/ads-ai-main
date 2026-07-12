@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Sparkles, Search, BookOpen, Building2, CheckCircle, TrendingUp, ChevronDown, Plus } from "lucide-react";
+import { Sparkles, Search, BookOpen, Building2, CheckCircle, TrendingUp, ChevronDown, Plus, User } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -35,6 +35,7 @@ const stepItems = [
 
 const extraItems = [
   { title: "Knowledge Base", href: "/knowledge", icon: BookOpen },
+  { title: "Account", href: "/account", icon: User },
 ];
 
 interface StepStatus {

@@ -15,6 +15,6 @@ export const config = {
      * - login, signup (auth pages)
      * - api routes that don't require auth
      */
-    "/((?!_next/static|_next/image|favicon.ico|login|signup|api/proxy-image).*)",
+    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico)$|login|signup|api/proxy-image|pricing|how-it-works|landing).*)",
   ],
 };
