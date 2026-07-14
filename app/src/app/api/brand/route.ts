@@ -23,6 +23,20 @@ const DATA_DIR = path.join(process.cwd(), "..", "data");
 
 export const maxDuration = 300;
 
+function formatError(e: unknown): string {
+  if (e instanceof Error) {
+    return e.message;
+  }
+  if (typeof e === 'string') {
+    return e;
+  }
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
+
 function clearBrandAssets() {
   const assetsDir = path.join(DATA_DIR, "brand-assets");
   if (!fs.existsSync(assetsDir)) return;
@@ -198,7 +212,7 @@ export async function POST(req: NextRequest) {
         try {
           analysis = await analyzeBrandIdentity(allContent, "", websiteUrl);
         } catch (e) {
-          errors.push(`Brand analysis failed: ${e}`);
+          errors.push(`Brand analysis failed: ${formatError(e)}`);
         }
 
         emit("products", "Extracting products with AI...", 35);
@@ -207,7 +221,7 @@ export async function POST(req: NextRequest) {
         try {
           claudeProducts = await extractProductsWithClaude(allContent, productImageMapData);
         } catch (e) {
-          errors.push(`Product extraction failed: ${e}`);
+          errors.push(`Product extraction failed: ${formatError(e)}`);
         }
 
         emit("web-images", "Downloading website visuals...", 42);
@@ -261,7 +275,7 @@ export async function POST(req: NextRequest) {
               emit("ig-assets-done", `Downloaded ${igSavedUrls.length} Instagram images`, 78);
             }
           } catch (e) {
-            errors.push(`Instagram scrape failed: ${e}`);
+            errors.push(`Instagram scrape failed: ${formatError(e)}`);
           }
         }
 
@@ -288,13 +302,13 @@ export async function POST(req: NextRequest) {
                 );
                 emit("youtube-analyzed", `Analyzed ${youtubeData.videos.length} videos for brand themes`, 87);
               } catch (e) {
-                errors.push(`YouTube content analysis failed: ${e}`);
+                errors.push(`YouTube content analysis failed: ${formatError(e)}`);
               }
             }
 
             emit("youtube-done", `YouTube analysis complete: ${youtubeData.channelName}`, 90);
           } catch (e) {
-            errors.push(`YouTube scrape failed: ${e}`);
+            errors.push(`YouTube scrape failed: ${formatError(e)}`);
           }
         }
 
@@ -354,7 +368,7 @@ export async function POST(req: NextRequest) {
           { brandId: savedBrandId }
         );
       } catch (e) {
-        emit("error", `Brand scraping failed: ${e}`, 0);
+        emit("error", `Brand scraping failed: ${formatError(e)}`, 0);
       } finally {
         controller.close();
       }

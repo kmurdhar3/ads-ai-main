@@ -192,7 +192,8 @@ export default function BrandPage() {
       setShowScrapeForm(false);
       setImageCacheBuster(Date.now()); // Force image reload
     } catch (e) {
-      setLog((prev) => [...prev, `Error: ${e}`]);
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      setLog((prev) => [...prev, `Error: ${errorMsg}`]);
     }
 
     setScraping(false);

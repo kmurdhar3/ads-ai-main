@@ -235,9 +235,15 @@ export async function downloadBrandAssets(
   for (const url of urls.slice(0, 20)) {
     try {
       const res = await fetch(url);
-      if (!res.ok) continue;
+      if (!res.ok) {
+        console.error(`[downloadBrandAssets] Fetch failed for ${url}: HTTP ${res.status}`);
+        continue;
+      }
       const buffer = Buffer.from(await res.arrayBuffer());
-      if (buffer.length < 1000) continue;
+      if (buffer.length < 1000) {
+        console.error(`[downloadBrandAssets] Image too small (${buffer.length} bytes) for ${url}`);
+        continue;
+      }
       const ext = url.match(/\.(png|jpg|jpeg|webp|svg)/i)?.[1] || "jpg";
       const filename = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
       const contentType = `image/${ext === "jpg" ? "jpeg" : ext}`;
@@ -245,8 +251,11 @@ export async function downloadBrandAssets(
       const publicUrl = await saveAsset(buffer, "brand-assets", filename, contentType);
       if (publicUrl) {
         saved.push(publicUrl);
+      } else {
+        console.error(`[downloadBrandAssets] saveAsset returned null for ${url} (filename: ${filename})`);
       }
-    } catch {
+    } catch (err) {
+      console.error(`[downloadBrandAssets] Exception downloading ${url}:`, err instanceof Error ? err.message : String(err));
       continue;
     }
   }
@@ -259,15 +268,26 @@ export async function downloadFile(
 ): Promise<string | null> {
   try {
     const res = await fetch(url);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.error(`[downloadFile] Fetch failed for ${url}: HTTP ${res.status}`);
+      return null;
+    }
     const buffer = Buffer.from(await res.arrayBuffer());
-    if (buffer.length < 100) return null;
+    if (buffer.length < 100) {
+      console.error(`[downloadFile] File too small (${buffer.length} bytes) for ${url}`);
+      return null;
+    }
 
     const ext = filename.match(/\.(png|jpg|jpeg|webp|svg|ico)/i)?.[1] || "jpg";
     const contentType = ext === "ico" ? "image/x-icon" : `image/${ext === "jpg" ? "jpeg" : ext}`;
 
-    return await saveAsset(buffer, "brand-assets", filename, contentType);
-  } catch {
+    const publicUrl = await saveAsset(buffer, "brand-assets", filename, contentType);
+    if (!publicUrl) {
+      console.error(`[downloadFile] saveAsset returned null for ${url} (filename: ${filename})`);
+    }
+    return publicUrl;
+  } catch (err) {
+    console.error(`[downloadFile] Exception downloading ${url}:`, err instanceof Error ? err.message : String(err));
     return null;
   }
 }
