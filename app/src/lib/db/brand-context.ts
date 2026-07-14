@@ -1,8 +1,8 @@
-import { createClient } from "@/lib/supabase/client";
+import { createRouteClient } from "@/lib/supabase/route";
 import { BrandContext } from "@/lib/types";
 
 export async function listBrandContexts(userId: string) {
-  const supabase = createClient();
+  const supabase = await createRouteClient();
 
   const { data, error } = await supabase
     .from("brand_contexts")
@@ -16,7 +16,7 @@ export async function listBrandContexts(userId: string) {
 }
 
 export async function getMostRecentBrandId(userId: string): Promise<string | null> {
-  const supabase = createClient();
+  const supabase = await createRouteClient();
 
   const { data, error } = await supabase
     .from("brand_contexts")
@@ -35,7 +35,7 @@ export async function getMostRecentBrandId(userId: string): Promise<string | nul
 }
 
 export async function getBrandContext(userId: string, brandContextId: string): Promise<BrandContext | null> {
-  const supabase = createClient();
+  const supabase = await createRouteClient();
 
   const { data, error } = await supabase
     .from("brand_contexts")
@@ -53,7 +53,7 @@ export async function getBrandContext(userId: string, brandContextId: string): P
 }
 
 export async function saveBrandContext(userId: string, context: BrandContext): Promise<{ brandId: string }> {
-  const supabase = createClient();
+  const supabase = await createRouteClient();
 
   const contextData = {
     user_id: userId,
@@ -80,7 +80,7 @@ export async function saveBrandContext(userId: string, context: BrandContext): P
 }
 
 export async function deleteBrandContext(userId: string): Promise<void> {
-  const supabase = createClient();
+  const supabase = await createRouteClient();
 
   const { error } = await supabase
     .from("brand_contexts")
