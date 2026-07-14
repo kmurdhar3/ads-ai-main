@@ -93,7 +93,10 @@ async function runBrandPhase(
       errors.push(`Product extraction failed: ${e}`);
     }
 
-    await downloadFile(metaBrand.faviconUrl, "favicon.ico");
+    const faviconUrl = await downloadFile(metaBrand.faviconUrl, "favicon.ico");
+    if (faviconUrl) {
+      metaBrand.faviconUrl = faviconUrl; // Use Supabase Storage URL
+    }
 
     const webImageUrls = extractImageUrls(pages);
     await downloadBrandAssets(webImageUrls.slice(0, 15), "web");
@@ -124,8 +127,10 @@ async function runBrandPhase(
 
         if (igProfile.profilePicUrl) {
           const ext = igProfile.profilePicUrl.match(/\.(png|jpg|jpeg|webp)/i)?.[1] || "jpg";
-          await downloadFile(igProfile.profilePicUrl, `profile-pic.${ext}`);
-          brand.instagramProfilePicUrl = igProfile.profilePicUrl;
+          const picUrl = await downloadFile(igProfile.profilePicUrl, `profile-pic.${ext}`);
+          if (picUrl) {
+            brand.instagramProfilePicUrl = picUrl; // Use Supabase Storage URL
+          }
         }
 
         const igAssets = igProfile.posts

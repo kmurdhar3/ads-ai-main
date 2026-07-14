@@ -1,10 +1,8 @@
 import { Brand, Product } from "./types";
-import fs from "fs";
-import path from "path";
+import { saveAsset } from "./storage";
 
 const FIRECRAWL_API_KEY = process.env.FIRECRAWL_API_KEY || "";
 const BASE_URL = "https://api.firecrawl.dev";
-const DATA_DIR = path.join(process.cwd(), "..", "data");
 
 interface ScrapeResult {
   success?: boolean;
@@ -233,9 +231,6 @@ export async function downloadBrandAssets(
   urls: string[],
   prefix = "brand"
 ): Promise<string[]> {
-  const assetsDir = path.join(DATA_DIR, "brand-assets");
-  if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-
   const saved: string[] = [];
   for (const url of urls.slice(0, 20)) {
     try {
@@ -245,8 +240,12 @@ export async function downloadBrandAssets(
       if (buffer.length < 1000) continue;
       const ext = url.match(/\.(png|jpg|jpeg|webp|svg)/i)?.[1] || "jpg";
       const filename = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
-      fs.writeFileSync(path.join(assetsDir, filename), buffer);
-      saved.push(filename);
+      const contentType = `image/${ext === "jpg" ? "jpeg" : ext}`;
+
+      const publicUrl = await saveAsset(buffer, "brand-assets", filename, contentType);
+      if (publicUrl) {
+        saved.push(publicUrl);
+      }
     } catch {
       continue;
     }
@@ -258,16 +257,16 @@ export async function downloadFile(
   url: string,
   filename: string
 ): Promise<string | null> {
-  const assetsDir = path.join(DATA_DIR, "brand-assets");
-  if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
     const buffer = Buffer.from(await res.arrayBuffer());
     if (buffer.length < 100) return null;
-    fs.writeFileSync(path.join(assetsDir, filename), buffer);
-    return filename;
+
+    const ext = filename.match(/\.(png|jpg|jpeg|webp|svg|ico)/i)?.[1] || "jpg";
+    const contentType = ext === "ico" ? "image/x-icon" : `image/${ext === "jpg" ? "jpeg" : ext}`;
+
+    return await saveAsset(buffer, "brand-assets", filename, contentType);
   } catch {
     return null;
   }

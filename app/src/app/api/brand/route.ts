@@ -182,13 +182,15 @@ export async function POST(req: NextRequest) {
 
         emit("favicon", "Downloading favicon...", 18);
         const faviconExt = "ico";
-        const faviconFile = await downloadFile(metaBrand.faviconUrl, `favicon.${faviconExt}`);
-        if (!faviconFile) {
-          const pngFavicon = await downloadFile(
+        const faviconUrl = await downloadFile(metaBrand.faviconUrl, `favicon.${faviconExt}`);
+        if (faviconUrl) {
+          metaBrand.faviconUrl = faviconUrl; // Use Supabase Storage URL
+        } else {
+          const pngFaviconUrl = await downloadFile(
             new URL("/favicon.png", websiteUrl).href,
             "favicon.png"
           );
-          if (pngFavicon) metaBrand.faviconUrl = new URL("/favicon.png", websiteUrl).href;
+          if (pngFaviconUrl) metaBrand.faviconUrl = pngFaviconUrl; // Use Supabase Storage URL
         }
 
         emit("analyzing", "Analyzing brand identity with AI...", 22);
@@ -210,8 +212,8 @@ export async function POST(req: NextRequest) {
 
         emit("web-images", "Downloading website visuals...", 42);
         const webImageUrls = extractImageUrls(pages);
-        const webSaved = await downloadBrandAssets(webImageUrls.slice(0, 15), "web");
-        emit("web-images-done", `Downloaded ${webSaved.length} website images`, 48);
+        const webSavedUrls = await downloadBrandAssets(webImageUrls.slice(0, 15), "web");
+        emit("web-images-done", `Downloaded ${webSavedUrls.length} website images`, 48);
 
         const brand = {
           ...metaBrand,
@@ -244,9 +246,9 @@ export async function POST(req: NextRequest) {
             if (igProfile.profilePicUrl) {
               emit("profile-pic", "Downloading profile picture...", 62);
               const ext = igProfile.profilePicUrl.match(/\.(png|jpg|jpeg|webp)/i)?.[1] || "jpg";
-              const picFile = await downloadFile(igProfile.profilePicUrl, `profile-pic.${ext}`);
-              if (picFile) {
-                brand.instagramProfilePicUrl = igProfile.profilePicUrl;
+              const picUrl = await downloadFile(igProfile.profilePicUrl, `profile-pic.${ext}`);
+              if (picUrl) {
+                brand.instagramProfilePicUrl = picUrl; // Use Supabase Storage URL
               }
             }
 
@@ -255,8 +257,8 @@ export async function POST(req: NextRequest) {
               .map((p) => p.imageUrl);
             if (igAssets.length > 0) {
               emit("ig-assets", `Downloading ${Math.min(igAssets.length, 12)} Instagram images...`, 68);
-              const igSaved = await downloadBrandAssets(igAssets.slice(0, 12), "ig");
-              emit("ig-assets-done", `Downloaded ${igSaved.length} Instagram images`, 78);
+              const igSavedUrls = await downloadBrandAssets(igAssets.slice(0, 12), "ig");
+              emit("ig-assets-done", `Downloaded ${igSavedUrls.length} Instagram images`, 78);
             }
           } catch (e) {
             errors.push(`Instagram scrape failed: ${e}`);
