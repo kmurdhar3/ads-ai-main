@@ -218,19 +218,23 @@ export default function CompetitorsPage() {
           if (!line.startsWith("data: ")) continue;
           try {
             const event: SearchProgress = JSON.parse(line.slice(6));
-            if (event.phase !== "heartbeat") {
-              setProgress((prev) => [...prev, event]);
-            } else {
+            // Update-in-place events: heartbeat and searching-progress
+            if (event.phase === "heartbeat" || event.phase === "searching-progress") {
               setProgress((prev) => {
                 const updated = [...prev];
-                const hbIdx = updated.findIndex(
-                  (p) => p.keyword === event.keyword && (p.phase === "searching" || p.phase === "heartbeat")
+                const idx = updated.findIndex(
+                  (p) => p.keyword === event.keyword && (p.phase === "searching" || p.phase === "heartbeat" || p.phase === "searching-progress")
                 );
-                if (hbIdx >= 0) {
-                  updated[hbIdx] = { ...updated[hbIdx], ...event, phase: "searching" };
+                if (idx >= 0) {
+                  updated[idx] = { ...updated[idx], ...event };
+                } else {
+                  updated.push(event);
                 }
                 return updated;
               });
+            } else {
+              // Append events: searching, downloading, keyword-done, keyword-error, error, done
+              setProgress((prev) => [...prev, event]);
             }
 
             if (event.phase === "done") {
@@ -467,7 +471,8 @@ export default function CompetitorsPage() {
               const done = progress.some((p) => p.keyword === kw && p.phase === "keyword-done");
               const failed = progress.some((p) => p.keyword === kw && p.phase === "keyword-error");
               const downloading = progress.some((p) => p.keyword === kw && p.phase === "downloading");
-              const active = progress.some((p) => p.keyword === kw && p.phase === "searching") && !done && !failed;
+              const active = progress.some((p) => p.keyword === kw && (p.phase === "searching" || p.phase === "searching-progress")) && !done && !failed;
+              const searchProgress = progress.find((p) => p.keyword === kw && p.phase === "searching-progress");
               const adsFound = progress.find((p) => p.keyword === kw && p.phase === "keyword-done")?.adsFound;
               const pending = !done && !failed && !active;
 
@@ -491,7 +496,9 @@ export default function CompetitorsPage() {
                     </span>
                     {active && !downloading && (
                       <p className="text-[10px] text-muted-foreground mt-0.5">
-                        Scraping ads from Meta Ad Library...
+                        {searchProgress?.elapsedSeconds
+                          ? `Scraping ads... (${searchProgress.elapsedSeconds}s elapsed)`
+                          : "Scraping ads from Meta Ad Library..."}
                       </p>
                     )}
                     {active && downloading && downloadCount !== undefined && (

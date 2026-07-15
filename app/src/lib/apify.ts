@@ -13,33 +13,81 @@ async function runActor(
   actorId: string,
   input: Record<string, unknown>,
   timeoutMs: number = 240_000,
+  onProgress?: (elapsed: number) => void,
 ): Promise<ApifyRunResult> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const startTime = Date.now();
 
-  try {
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/${actorId}/run-sync-get-dataset-items?token=${APIFY_API_TOKEN}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-        signal: controller.signal,
-      }
-    );
-    clearTimeout(timer);
-    if (!res.ok) {
-      throw new Error(`Apify actor ${actorId} failed: ${res.status}`);
+  // Start the actor run (async)
+  const startRes = await fetch(
+    `https://api.apify.com/v2/acts/${actorId}/runs?token=${APIFY_API_TOKEN}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
     }
-    const items = await res.json();
-    return { items: Array.isArray(items) ? items : [] };
-  } catch (e) {
-    clearTimeout(timer);
-    if ((e as Error).name === "AbortError") {
+  );
+
+  if (!startRes.ok) {
+    throw new Error(`Apify actor ${actorId} start failed: ${startRes.status}`);
+  }
+
+  const startData = await startRes.json();
+  const runId = startData.data.id;
+  const defaultDatasetId = startData.data.defaultDatasetId;
+
+  // Poll for completion with progress callbacks
+  let attempts = 0;
+  const maxAttempts = Math.ceil(timeoutMs / 5000); // Poll every 5s
+
+  while (attempts < maxAttempts) {
+    const elapsed = Date.now() - startTime;
+
+    // Emit progress callback every poll
+    if (onProgress) {
+      onProgress(Math.floor(elapsed / 1000));
+    }
+
+    // Check if we've exceeded timeout
+    if (elapsed > timeoutMs) {
       throw new Error(`Apify actor ${actorId} timed out after ${timeoutMs / 1000}s`);
     }
-    throw e;
+
+    // Check run status
+    const statusRes = await fetch(
+      `https://api.apify.com/v2/acts/${actorId}/runs/${runId}?token=${APIFY_API_TOKEN}`
+    );
+
+    if (!statusRes.ok) {
+      throw new Error(`Apify actor ${actorId} status check failed: ${statusRes.status}`);
+    }
+
+    const statusData = await statusRes.json();
+    const status = statusData.data.status;
+
+    if (status === "SUCCEEDED") {
+      // Fetch dataset items
+      const itemsRes = await fetch(
+        `https://api.apify.com/v2/datasets/${defaultDatasetId}/items?token=${APIFY_API_TOKEN}`
+      );
+
+      if (!itemsRes.ok) {
+        throw new Error(`Apify dataset fetch failed: ${itemsRes.status}`);
+      }
+
+      const items = await itemsRes.json();
+      return { items: Array.isArray(items) ? items : [] };
+    }
+
+    if (status === "FAILED" || status === "ABORTED" || status === "TIMED-OUT") {
+      throw new Error(`Apify actor ${actorId} ${status.toLowerCase()}`);
+    }
+
+    // Status is RUNNING or READY — wait and poll again
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    attempts++;
   }
+
+  throw new Error(`Apify actor ${actorId} timed out after ${attempts * 5}s`);
 }
 
 export interface InstagramPost {
@@ -121,20 +169,26 @@ export interface MetaAd {
 
 export async function scrapeMetaAds(
   query: string,
-  options: { country?: string; limit?: number } = {}
+  options: { country?: string; limit?: number; onProgress?: (elapsed: number) => void } = {}
 ): Promise<MetaAd[]> {
   const country = options.country || "US";
   const limit = options.limit || 10;
+  const onProgress = options.onProgress;
   // Over-request because many ads are video-only or DCO templates.
   // Scale multiplier down for small limits to avoid huge scrapes.
   const multiplier = limit <= 5 ? 4 : limit <= 10 ? 6 : 8;
   const requestLimit = limit * multiplier;
   const adLibraryUrl = `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=${country}&q=${encodeURIComponent(query)}&search_type=keyword_unordered&media_type=all`;
 
-  const { items } = await runActor("curious_coder~facebook-ads-library-scraper", {
-    urls: [{ url: adLibraryUrl }],
-    count: requestLimit,
-  });
+  const { items } = await runActor(
+    "curious_coder~facebook-ads-library-scraper",
+    {
+      urls: [{ url: adLibraryUrl }],
+      count: requestLimit,
+    },
+    240_000,
+    onProgress
+  );
 
   let results: MetaAd[];
   if (items.length === 1 && items[0].results) {

@@ -137,7 +137,19 @@ export async function POST(req: NextRequest) {
           });
 
           try {
-            const ads = await scrapeMetaAds(keyword, { limit: adsPerKeyword });
+            const ads = await scrapeMetaAds(keyword, {
+              limit: adsPerKeyword,
+              onProgress: (elapsed) => {
+                emit({
+                  phase: "searching-progress",
+                  keyword,
+                  index,
+                  total: keywords.length,
+                  elapsedSeconds: elapsed,
+                  message: `Scraping "${keyword}"... (${elapsed}s elapsed)`,
+                });
+              },
+            });
 
             emit({
               phase: "downloading",
