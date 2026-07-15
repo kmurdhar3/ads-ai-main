@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readBrandContext, readSearchState, writeSearchState, writeMetaAds } from "@/lib/csv";
 import { getAuthenticatedUser } from "@/lib/auth-server";
 import { saveMetaAds } from "@/lib/db/meta-ads";
-import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@/lib/supabase/server";
 import { scrapeMetaAds, downloadAdImage } from "@/lib/apify";
 import { scoreAdvertisers, extractKeywords } from "@/lib/competitor-scoring";
 import { MetaAdEntry } from "@/lib/types";
@@ -16,18 +16,7 @@ export async function GET() {
   try {
     const user = await getAuthenticatedUser();
     if (user) {
-      const supabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-          cookies: {
-            getAll() {
-              return []; // no-op for server route GET
-            },
-            setAll() {},
-          },
-        }
-      );
+      const supabase = await createClient();
 
       const { data, error } = await supabase
         .from("search_results")
@@ -227,11 +216,7 @@ export async function POST(req: NextRequest) {
                 await saveMetaAds(user.id, brandId, allMetaAds);
 
                 try {
-                  const supabase = createServerClient(
-                    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-                    { cookies: { getAll() { return req.cookies.getAll() }, setAll() {} } }
-                  );
+                  const supabase = await createClient();
                   const advertisers = scoreAdvertisers(allMetaAds);
                   await supabase.from("search_results").insert({
                     user_id: user.id,
@@ -252,13 +237,21 @@ export async function POST(req: NextRequest) {
 
         const advertisers = scoreAdvertisers(allMetaAds);
 
-        const searchState = {
-          keywords,
-          searchedAt: new Date().toISOString(),
-          advertisers,
-          totalAdsScraped: allMetaAds.length,
-        };
-        await writeSearchState(searchState);
+        // Only write local files for unauthenticated users
+        if (!user) {
+          const searchState = {
+            keywords,
+            searchedAt: new Date().toISOString(),
+            advertisers,
+            totalAdsScraped: allMetaAds.length,
+          };
+          try {
+            await writeSearchState(searchState);
+          } catch (e) {
+            // Ignore local file write errors (e.g., read-only filesystem in production)
+            console.warn("Failed to write search state to local file:", e);
+          }
+        }
 
         emit({
           phase: "done",
