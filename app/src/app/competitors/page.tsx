@@ -176,6 +176,7 @@ export default function CompetitorsPage() {
       const decoder = new TextDecoder();
       let buffer = "";
       let lastEventTime = Date.now();
+      let receivedDoneEvent = false;
 
       // Connection health check: if no events for 60s, connection likely dropped
       const healthCheck = setInterval(() => {
@@ -198,7 +199,7 @@ export default function CompetitorsPage() {
           clearInterval(healthCheck);
           clearTimeout(clientTimeout);
           // Stream ended without "done" event — likely an error
-          if (state === "searching") {
+          if (!receivedDoneEvent) {
             stopTimer();
             setProgress((prev) => [...prev, {
               phase: "error",
@@ -238,6 +239,7 @@ export default function CompetitorsPage() {
             }
 
             if (event.phase === "done") {
+              receivedDoneEvent = true;
               clearInterval(healthCheck);
               clearTimeout(clientTimeout);
               stopTimer();
