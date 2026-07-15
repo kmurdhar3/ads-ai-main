@@ -67,14 +67,12 @@ export default function CompetitorsPage() {
   const [expandedAdvertiser, setExpandedAdvertiser] = useState<string | null>(null);
   const [progress, setProgress] = useState<SearchProgress[]>([]);
   const [suggestingKeywords, setSuggestingKeywords] = useState(false);
-  const [searchStartTime, setSearchStartTime] = useState<number | null>(null);
   const [elapsedDisplay, setElapsedDisplay] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const startTimer = useCallback(() => {
     const start = Date.now();
-    setSearchStartTime(start);
     setElapsedDisplay(0);
     timerRef.current = setInterval(() => {
       setElapsedDisplay(Math.floor((Date.now() - start) / 1000));
@@ -149,6 +147,17 @@ export default function CompetitorsPage() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // Client-side timeout: 310 seconds (slightly longer than server's 300s maxDuration)
+    const clientTimeout = setTimeout(() => {
+      controller.abort();
+      stopTimer();
+      setProgress((prev) => [...prev, {
+        phase: "error",
+        message: "Search timed out after 5 minutes. Please try with fewer keywords or lower ads-per-keyword.",
+      }]);
+      setState("setup");
+    }, 310_000);
+
     try {
       const res = await fetch("/api/search", {
         method: "POST",
@@ -157,16 +166,50 @@ export default function CompetitorsPage() {
         signal: controller.signal,
       });
 
+      if (!res.ok) {
+        throw new Error(`Search failed: ${res.status} ${res.statusText}`);
+      }
+
       const reader = res.body?.getReader();
       if (!reader) throw new Error("No response body");
 
       const decoder = new TextDecoder();
       let buffer = "";
+      let lastEventTime = Date.now();
+
+      // Connection health check: if no events for 60s, connection likely dropped
+      const healthCheck = setInterval(() => {
+        const elapsed = Date.now() - lastEventTime;
+        if (elapsed > 60_000) {
+          clearInterval(healthCheck);
+          controller.abort();
+          stopTimer();
+          setProgress((prev) => [...prev, {
+            phase: "error",
+            message: "Connection lost. The search may have timed out or encountered an error. Please try again.",
+          }]);
+          setState("setup");
+        }
+      }, 5_000);
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          clearInterval(healthCheck);
+          clearTimeout(clientTimeout);
+          // Stream ended without "done" event — likely an error
+          if (state === "searching") {
+            stopTimer();
+            setProgress((prev) => [...prev, {
+              phase: "error",
+              message: "Search ended unexpectedly. Please try again with fewer keywords.",
+            }]);
+            setState("setup");
+          }
+          break;
+        }
 
+        lastEventTime = Date.now();
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
@@ -191,6 +234,8 @@ export default function CompetitorsPage() {
             }
 
             if (event.phase === "done") {
+              clearInterval(healthCheck);
+              clearTimeout(clientTimeout);
               stopTimer();
               const [searchRes, adsRes] = await Promise.all([
                 fetch("/api/search"),
@@ -208,8 +253,13 @@ export default function CompetitorsPage() {
         }
       }
     } catch (e) {
+      clearTimeout(clientTimeout);
       stopTimer();
       if ((e as Error).name !== "AbortError") {
+        setProgress((prev) => [...prev, {
+          phase: "error",
+          message: `Search failed: ${(e as Error).message}`,
+        }]);
         setState("setup");
       }
     }
@@ -348,8 +398,8 @@ export default function CompetitorsPage() {
       const isDone = progress.some((p) => p.keyword === kw && (p.phase === "keyword-done" || p.phase === "keyword-error"));
       return isSearching && !isDone;
     });
-    const isDownloading = progress.some((p) => p.phase === "downloading" && p.keyword === activeKeyword);
     const downloadCount = progress.find((p) => p.phase === "downloading" && p.keyword === activeKeyword)?.adCount;
+    const errorMessage = progress.find((p) => p.phase === "error")?.message;
 
     const estimatePerBatch = 20;
     const totalBatches = Math.ceil(total / 3);
@@ -377,6 +427,28 @@ export default function CompetitorsPage() {
               : "Finishing up..."}
           </p>
         </div>
+
+        {/* Error message banner */}
+        {errorMessage && (
+          <Card className="border-red-500/20 bg-red-500/10">
+            <CardContent className="pt-4 pb-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 space-y-2">
+                  <p className="text-sm text-red-200">{errorMessage}</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={goToResearch}
+                    className="border-red-500/30 hover:bg-red-500/20"
+                  >
+                    Try Again
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Elapsed time + estimate */}
         <div className="flex items-center justify-center gap-6 text-sm">
