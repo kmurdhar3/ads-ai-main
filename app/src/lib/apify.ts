@@ -190,17 +190,23 @@ export async function scrapeMetaAds(
     onProgress
   );
 
+  console.log(`[scrapeMetaAds] Query: "${query}", Raw items returned:`, items.length);
+
   let results: MetaAd[];
   if (items.length === 1 && items[0].results) {
     results = (items[0].results || []).map(mapAdResult(query));
+    console.log(`[scrapeMetaAds] Nested results format, extracted:`, results.length);
   } else {
-    results = items
-      .filter((ad: Record<string, unknown>) => !ad.error && ad.snapshot)
-      .map(mapAdResult(query));
+    const filtered = items.filter((ad: Record<string, unknown>) => !ad.error && ad.snapshot);
+    console.log(`[scrapeMetaAds] Flat format, filtered (!error && snapshot):`, filtered.length);
+    results = filtered.map(mapAdResult(query));
   }
+
+  console.log(`[scrapeMetaAds] After mapping:`, results.length);
 
   // Only keep ads that have an image AND are not DCO templates
   const usable = results.filter((ad) => hasImage(ad) && !isDcoAd(ad) && (ad.primaryText || ad.headline));
+  console.log(`[scrapeMetaAds] After quality filters (hasImage, !DCO, hasText):`, usable.length);
 
   // Filter to ads from the advertiser (page name contains query terms)
   const queryLower = query.toLowerCase();
@@ -209,6 +215,8 @@ export async function scrapeMetaAds(
     const pageLower = ad.advertiserName.toLowerCase();
     return queryWords.every((w) => pageLower.includes(w)) || pageLower.includes(queryLower);
   });
+
+  console.log(`[scrapeMetaAds] After advertiser name filter:`, relevant.length, `(fallback to usable: ${usable.length})`);
 
   const pool = relevant.length > 0 ? relevant : usable;
 
@@ -221,6 +229,8 @@ export async function scrapeMetaAds(
     seen.add(key);
     return true;
   });
+
+  console.log(`[scrapeMetaAds] After deduplication:`, unique.length, `(requested limit: ${limit})`);
 
   return unique.slice(0, limit);
 }
