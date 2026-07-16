@@ -21,16 +21,20 @@ export async function GET() {
       const { data, error } = await supabase
         .from("search_results")
         .select("*, meta_ads(*)")
-        .eq("user_id", user.id)
         .order("searched_at", { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
-      if (!data || error) return NextResponse.json(null);
+      if (error) {
+        console.error("Failed to fetch search_results:", error);
+        return NextResponse.json(null);
+      }
 
+      // data will be null if no row found, which is valid
       return NextResponse.json(data);
     }
   } catch (e) {
+    console.error("Error in search GET handler:", e);
     // fallback to file
   }
 
@@ -218,15 +222,19 @@ export async function POST(req: NextRequest) {
                 try {
                   const supabase = await createClient();
                   const advertisers = scoreAdvertisers(allMetaAds);
-                  await supabase.from("search_results").insert({
+                  const { error } = await supabase.from("search_results").insert({
                     user_id: user.id,
                     keywords,
                     advertisers,
                     total_ads_scraped: allMetaAds.length,
                     searched_at: new Date().toISOString(),
                   });
+
+                  if (error) {
+                    console.error("Failed to insert search_results:", error);
+                  }
                 } catch (e) {
-                  // ignore write errors
+                  console.error("Exception inserting search_results:", e);
                 }
               } else {
                 await writeMetaAds(allMetaAds);
