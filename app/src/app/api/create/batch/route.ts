@@ -7,7 +7,7 @@ import { getBrandContext, getMostRecentBrandId } from "@/lib/db/brand-context";
 import { getProducts } from "@/lib/db/products";
 import { getMetaAds } from "@/lib/db/meta-ads";
 import { getLatestAnalysis } from "@/lib/db/analysis";
-import { saveConcept, createConceptBatch, updateConceptBatchStats, getConceptsByBatch } from "@/lib/db/concepts";
+import { saveConcept, createConceptBatch, updateConceptBatchStats, getConceptsByBatch, updateConceptImage } from "@/lib/db/concepts";
 import { generateReplicaAdConcept } from "@/lib/claude";
 import { evaluateCreative } from "@/lib/quality-control";
 import { generateAdImage } from "@/lib/kie-ai";
@@ -191,8 +191,6 @@ export async function POST(req: NextRequest) {
 
       const startTime = Date.now();
       const elapsedMs = () => Date.now() - startTime;
-      // Keep the whole request under Vercel's 300s limit.
-      const BUDGET_MS = 270_000;
 
       // Generation goes quiet for minutes (Claude + Kie.ai polling); a heartbeat
       // every 10s keeps the connection from being dropped.
@@ -211,9 +209,18 @@ export async function POST(req: NextRequest) {
         message: `Generating concepts ${offset + 1}-${offset + assignments.length} of ${totalCount}...`,
       });
 
+      // Hard deadline, well inside Vercel's 300s. Past this the request gets cut
+      // off mid-stream (the browser reports "network error") and work is lost.
+      const DEADLINE_MS = 250_000;
+      const remainingMs = () => DEADLINE_MS - elapsedMs();
+
       async function makeImage(prompt: string, ad: MetaAdEntry): Promise<string> {
-        // Leave ~40s for QC and saving after the image.
-        const maxWaitMs = Math.max(30_000, BUDGET_MS - elapsedMs() - 40_000);
+        // Keep ~15s after the image for downloading it and saving.
+        const maxWaitMs = remainingMs() - 15_000;
+        if (maxWaitMs < 20_000) {
+          errors.push("Image: skipped — not enough time left in this request");
+          return "";
+        }
         try {
           return await generateAdImage(prompt, ad.imageUrl ? [ad.imageUrl] : [], {
             aspectRatio: detectAspectRatio(ad),
@@ -232,13 +239,12 @@ export async function POST(req: NextRequest) {
           assignments.map(async ({ index: idx, ad, product }) => {
             try {
               const adHook = hookMap.get(ad.id);
+              const t0 = elapsedMs();
 
+              // 1. Copy first. QC only reads text (incl. the image prompt), so
+              //    settle the copy before spending minutes on an image.
               let concept = await generateReplicaAdConcept(brand, product, ad, knowledgeTactics, undefined, adHook);
-              if (concept.imagePrompt) {
-                concept.generatedImageUrl = await makeImage(concept.imagePrompt, ad);
-              }
 
-              // Quality control (one retry, only if there is time left for it)
               if (brandContext) {
                 try {
                   const qc = await evaluateCreative(concept, brandContext, ad, products);
@@ -246,18 +252,15 @@ export async function POST(req: NextRequest) {
                   concept.qualityFeedback = qc.feedback;
                   concept.qcPassed = qc.passed;
 
-                  if (!qc.passed && elapsedMs() < 90_000) {
+                  // One retry, only if there is still time for copy + QC + an image
+                  if (!qc.passed && remainingMs() > 150_000) {
                     send({
                       type: "qc-retry",
                       index: idx,
                       score: qc.overallScore,
                       message: `Concept ${idx + 1} scored ${qc.overallScore}/10 — retrying...`,
                     });
-
                     const retried = await generateReplicaAdConcept(brand, product, ad, knowledgeTactics, qc.feedback, adHook);
-                    if (retried.imagePrompt) {
-                      retried.generatedImageUrl = await makeImage(retried.imagePrompt, ad);
-                    }
                     const retryQc = await evaluateCreative(retried, brandContext, ad, products);
                     retried.qualityScore = retryQc.overallScore;
                     retried.qualityFeedback = retryQc.feedback;
@@ -268,13 +271,29 @@ export async function POST(req: NextRequest) {
                   console.error(`QC failed for concept ${idx + 1}:`, e);
                 }
               }
+              const tCopy = elapsedMs();
 
-              // Save right away so finished work survives even if the request is cut off.
+              // 2. Save the copy now, so a cut-off later only loses the image.
+              let savedId: string | null = null;
               if (user && brandId) {
-                await saveConcept(user.id, brandId, concept, batchId || undefined);
+                savedId = await saveConcept(user.id, brandId, concept, batchId || undefined);
                 savedCount++;
               }
 
+              // 3. One image, for the final copy.
+              if (concept.imagePrompt) {
+                concept.generatedImageUrl = await makeImage(concept.imagePrompt, ad);
+                if (concept.generatedImageUrl && savedId && user) {
+                  await updateConceptImage(user.id, savedId, concept.generatedImageUrl);
+                }
+              }
+
+              console.log(
+                `[create/batch] Concept ${idx + 1}: copy+QC ${Math.round((tCopy - t0) / 1000)}s, ` +
+                `image ${Math.round((elapsedMs() - tCopy) / 1000)}s, request at ${Math.round(elapsedMs() / 1000)}s`
+              );
+
+              if (savedId) concept.id = savedId;
               send({ type: "concept", index: idx, concept, qcPassed: concept.qcPassed, qcScore: concept.qualityScore });
               return concept;
             } catch (e) {

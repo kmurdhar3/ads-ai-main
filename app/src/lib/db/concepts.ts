@@ -55,10 +55,10 @@ export async function saveConcept(
   concept: AdConcept,
   batchId?: string,
   parentConceptId?: string
-): Promise<void> {
+): Promise<string> {
   const supabase = await createRouteClient();
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("concepts")
     .insert({
       brand_context_id: brandContextId,
@@ -85,8 +85,22 @@ export async function saveConcept(
       batch_id: batchId || null,
       parent_concept_id: parentConceptId || null,
       version: parentConceptId ? (concept.version || 1) + 1 : 1,
-    });
+    })
+    .select("id")
+    .single();
 
+  if (error) throw error;
+  return data.id as string;
+}
+
+/** Fill in the image after the concept's copy was saved. */
+export async function updateConceptImage(userId: string, conceptId: string, imageUrl: string): Promise<void> {
+  const supabase = await createRouteClient();
+  const { error } = await supabase
+    .from("concepts")
+    .update({ generated_image_url: imageUrl })
+    .eq("id", conceptId)
+    .eq("user_id", userId);
   if (error) throw error;
 }
 
