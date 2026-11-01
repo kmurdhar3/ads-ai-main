@@ -65,6 +65,7 @@ export default function AnalysisPage() {
   const [metaAds, setMetaAds] = useState<MetaAdEntry[]>([]);
   const [adCount, setAdCount] = useState(0);
   const [analyzing, setAnalyzing] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [lightboxVideo, setLightboxVideo] = useState<string | null>(null);
   const [expandedHookDetails, setExpandedHookDetails] = useState<Set<number>>(new Set());
@@ -137,30 +138,59 @@ export default function AnalysisPage() {
     setState("analyzing");
 
     setErrorMessage(null);
+    setElapsedSeconds(0);
 
     try {
       const res = await fetch("/api/analysis", { method: "POST" });
-      const text = await res.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        // Vercel returns a non-JSON page when the function times out or crashes
-        throw new Error(
-          res.status === 504
-            ? "Analysis timed out on the server. Please try again."
-            : `Server error ${res.status}: ${text.slice(0, 200)}`
-        );
+
+      // Validation errors (no brand, no ads) come back as plain JSON
+      if (!res.headers.get("content-type")?.includes("text/event-stream")) {
+        const text = await res.text();
+        let msg = `Server error ${res.status}: ${text.slice(0, 200)}`;
+        try {
+          msg = JSON.parse(text).error || msg;
+        } catch {
+          if (res.status === 504) msg = "Analysis timed out on the server. Please try again.";
+        }
+        throw new Error(msg);
       }
 
-      if (data.patterns) {
-        setAnalysis(data);
-        if (data.saveError) setErrorMessage(data.saveError);
-        setState("results");
-      } else {
-        setErrorMessage(data.error || "Analysis returned no patterns.");
-        setState("ready");
+      // The analysis streams heartbeats every 10s, then a "done" or "error" event
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No response body");
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finished = false;
+
+      while (!finished) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          let event;
+          try {
+            event = JSON.parse(line.slice(6));
+          } catch {
+            continue;
+          }
+          if (event.phase === "heartbeat" || event.phase === "analyzing") {
+            setElapsedSeconds(event.elapsedSeconds || 0);
+          } else if (event.phase === "done") {
+            finished = true;
+            setAnalysis(event.analysis);
+            if (event.saveError) setErrorMessage(event.saveError);
+            setState("results");
+          } else if (event.phase === "error") {
+            throw new Error(event.message);
+          }
+        }
       }
+
+      if (!finished) throw new Error("Connection closed before the analysis finished. Please try again.");
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : String(e));
       setState("ready");
@@ -234,7 +264,9 @@ export default function AnalysisPage() {
               ) : (
                 <TrendingUp className="h-4 w-4 mr-2" />
               )}
-              {analyzing ? "Analyzing..." : "Analyze What's Working"}
+              {analyzing
+                ? `Analyzing... ${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s (usually 2-4 min)`
+                : "Analyze What's Working"}
             </Button>
           </CardContent>
         </Card>

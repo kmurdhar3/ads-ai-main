@@ -65,32 +65,63 @@ export async function POST() {
     return NextResponse.json({ error: "No competitor ads found. Search first." }, { status: 400 });
   }
 
-  let analysis;
-  try {
-    analysis = await analyzeWinningPatterns(metaAds, brandContext);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error("[analysis] Claude analysis failed:", e);
-    return NextResponse.json({ error: `Analysis failed: ${msg}` }, { status: 500 });
-  }
+  // Claude can take 3-4 minutes here. Stream SSE with a heartbeat every 10s so
+  // the connection never sits idle long enough to be dropped ("Failed to fetch").
+  const encoder = new TextEncoder();
+  const ads = metaAds;
+  const brand = brandContext;
+  const stream = new ReadableStream({
+    async start(controller) {
+      const emit = (data: Record<string, unknown>) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+        } catch { /* stream closed */ }
+      };
 
-  if (user && brandId) {
-    const supabase = await createClient();
-    const { error } = await supabase.from("analysis_results").insert({
-      user_id: user.id,
-      brand_context_id: brandId,
-      hooks: analysis.hooks || [],
-      patterns: analysis.patterns || [],
-      raw_data: analysis,
-    });
-    if (error) {
-      console.error("[analysis] Failed to save analysis:", error);
-      // Still return the result so the user sees it, but tell them it wasn't saved.
-      return NextResponse.json({ ...analysis, saveError: `Analysis ran but was not saved: ${error.message}` });
-    }
-  } else {
-    await writeAnalysis(analysis);
-  }
+      const startedAt = Date.now();
+      emit({ phase: "analyzing", elapsedSeconds: 0 });
+      const heartbeat = setInterval(() => {
+        emit({ phase: "heartbeat", elapsedSeconds: Math.round((Date.now() - startedAt) / 1000) });
+      }, 10_000);
 
-  return NextResponse.json(analysis);
+      try {
+        const analysis = await analyzeWinningPatterns(ads, brand);
+        let saveError: string | undefined;
+
+        if (user && brandId) {
+          const supabase = await createClient();
+          const { error } = await supabase.from("analysis_results").insert({
+            user_id: user.id,
+            brand_context_id: brandId,
+            hooks: analysis.hooks || [],
+            patterns: analysis.patterns || [],
+            raw_data: analysis,
+          });
+          if (error) {
+            console.error("[analysis] Failed to save analysis:", error);
+            saveError = `Analysis ran but was not saved: ${error.message}`;
+          }
+        } else {
+          await writeAnalysis(analysis);
+        }
+
+        emit({ phase: "done", analysis, saveError });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[analysis] Claude analysis failed:", e);
+        emit({ phase: "error", message: `Analysis failed: ${msg}` });
+      } finally {
+        clearInterval(heartbeat);
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }
