@@ -291,10 +291,11 @@ export async function downloadAdImage(
 ): Promise<string> {
   if (!imageUrl) return "";
 
-  const dir = path.join(DATA_DIR, "competitor-ads", slugify(advertiser));
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
   try {
+    // On Vercel the filesystem is read-only, so this can throw. Return "" and
+    // let the UI fall back to the remote imageUrl instead of failing the keyword.
+    const dir = path.join(DATA_DIR, "competitor-ads", slugify(advertiser));
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const res = await fetch(imageUrl);
     if (!res.ok) return "";
     const buffer = Buffer.from(await res.arrayBuffer());
