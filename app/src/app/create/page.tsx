@@ -266,7 +266,12 @@ export default function CreatePage() {
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         console.error("Batch generation failed:", e);
-        errors.push((e as Error).message);
+        const msg = (e as Error).message || String(e);
+        errors.push(
+          /network|fetch/i.test(msg)
+            ? `Connection to the server dropped (${msg}). Concepts finished before that were saved — refresh to see them.`
+            : msg
+        );
         setGenerateErrors([...errors]);
       }
     }

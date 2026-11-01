@@ -66,6 +66,13 @@ function getImageDimensions(buf: Buffer): { width: number; height: number } | nu
   return null;
 }
 
+// Supabase errors are plain objects ({ message, code }), not Error instances.
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === "object" && "message" in e) return String((e as { message: unknown }).message);
+  return String(e);
+}
+
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
@@ -213,7 +220,7 @@ export async function POST(req: NextRequest) {
             maxWaitMs,
           });
         } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
+          const msg = errorMessage(e);
           console.error("Image generation failed:", e);
           errors.push(`Image: ${msg}`);
           return "";
@@ -271,7 +278,7 @@ export async function POST(req: NextRequest) {
               send({ type: "concept", index: idx, concept, qcPassed: concept.qcPassed, qcScore: concept.qualityScore });
               return concept;
             } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e);
+              const msg = errorMessage(e);
               console.error(`Concept ${idx + 1} failed:`, e);
               errors.push(`Concept ${idx + 1}: ${msg}`);
               send({ type: "concept-error", index: idx, message: `Concept ${idx + 1} failed: ${msg}` });
