@@ -4,6 +4,7 @@ import { getMostRecentBrandId } from "@/lib/db/brand-context";
 import { getBrandContext } from "@/lib/db/brand-context";
 import { getProducts } from "@/lib/db/products";
 import { getMetaAds } from "@/lib/db/meta-ads";
+import { getLatestAnalysis } from "@/lib/db/analysis";
 import { saveConcept } from "@/lib/db/concepts";
 import { generateReplicaAdConcept } from "@/lib/claude";
 import { generateAdImage } from "@/lib/kie-ai";
@@ -80,7 +81,7 @@ export async function POST(req: NextRequest) {
     .join("\n\n---\n\n")
     .slice(0, 8000);
 
-  const analysisResult = readAnalysis();
+  const analysisResult = await getLatestAnalysis(user.id, brandId);
   const hookMap = new Map<string, HookAnalysis>();
   if (analysisResult?.hooks) {
     for (const hook of analysisResult.hooks) {

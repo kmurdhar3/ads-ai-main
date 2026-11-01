@@ -4,6 +4,7 @@ import { getAuthenticatedUser } from "@/lib/auth-server";
 import { getBrandContext, getMostRecentBrandId } from "@/lib/db/brand-context";
 import { getConcepts } from "@/lib/db/concepts";
 import { getMetaAds } from "@/lib/db/meta-ads";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET() {
   try {
@@ -22,16 +23,23 @@ export async function GET() {
         });
       }
 
-      const [brandContext, concepts, metaAds] = await Promise.all([
+      const supabase = await createClient();
+      const [brandContext, concepts, metaAds, analysisCount] = await Promise.all([
         getBrandContext(user.id, brandId),
         getConcepts(user.id, brandId),
         getMetaAds(user.id, brandId),
+        supabase
+          .from("analysis_results")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .eq("brand_context_id", brandId)
+          .then(({ count }) => count || 0),
       ]);
 
       return NextResponse.json({
         hasBrand: !!brandContext,
         hasSearch: metaAds && metaAds.length > 0,
-        hasAnalysis: false,
+        hasAnalysis: analysisCount > 0,
         competitorCount: (metaAds && metaAds.length) || 0,
         metaAdCount: (metaAds && metaAds.length) || 0,
         conceptCount: (concepts && concepts.length) || 0,

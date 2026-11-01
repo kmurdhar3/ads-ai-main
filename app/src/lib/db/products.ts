@@ -1,8 +1,9 @@
-import { createClient } from "@/lib/supabase/client";
+// Server-side client: it carries the user's session cookie, so RLS allows the queries.
+import { createClient } from "@/lib/supabase/server";
 import { Product } from "@/lib/types";
 
 export async function getProducts(userId: string, brandContextId: string): Promise<Product[]> {
-  const supabase = createClient();
+  const supabase = await createClient();
 
   const { data, error } = await supabase
     .from("products")
@@ -24,7 +25,7 @@ export async function getProducts(userId: string, brandContextId: string): Promi
 }
 
 export async function saveProducts(userId: string, brandContextId: string, products: Product[]): Promise<void> {
-  const supabase = createClient();
+  const supabase = await createClient();
 
   // Delete existing products for this brand context
   await supabase
@@ -53,7 +54,7 @@ export async function saveProducts(userId: string, brandContextId: string, produ
 }
 
 export async function addProduct(userId: string, brandContextId: string, product: Product): Promise<void> {
-  const supabase = createClient();
+  const supabase = await createClient();
 
   const { error } = await supabase
     .from("products")

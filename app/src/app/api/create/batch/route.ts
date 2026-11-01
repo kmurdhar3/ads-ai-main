@@ -6,6 +6,7 @@ import { getAuthenticatedUser } from "@/lib/auth-server";
 import { getBrandContext, getMostRecentBrandId } from "@/lib/db/brand-context";
 import { getProducts } from "@/lib/db/products";
 import { getMetaAds } from "@/lib/db/meta-ads";
+import { getLatestAnalysis } from "@/lib/db/analysis";
 import { createServerClient } from "@supabase/ssr";
 import { saveConcept, createConceptBatch, updateConceptBatchStats } from "@/lib/db/concepts";
 import { generateReplicaAdConcept } from "@/lib/claude";
@@ -134,7 +135,7 @@ export async function POST(req: NextRequest) {
     .join("\n\n---\n\n")
     .slice(0, 8000);
 
-  const analysisResult = readAnalysis();
+  const analysisResult = user && brandId ? await getLatestAnalysis(user.id, brandId) : readAnalysis();
   const hookMap = new Map<string, HookAnalysis>();
   if (analysisResult?.hooks) {
     for (const hook of analysisResult.hooks) {

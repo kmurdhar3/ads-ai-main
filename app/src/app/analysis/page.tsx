@@ -61,6 +61,7 @@ type PageState = "loading" | "no-data" | "ready" | "analyzing" | "results";
 export default function AnalysisPage() {
   const [state, setState] = useState<PageState>("loading");
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [metaAds, setMetaAds] = useState<MetaAdEntry[]>([]);
   const [adCount, setAdCount] = useState(0);
   const [analyzing, setAnalyzing] = useState(false);
@@ -135,17 +136,33 @@ export default function AnalysisPage() {
     setAnalyzing(true);
     setState("analyzing");
 
+    setErrorMessage(null);
+
     try {
       const res = await fetch("/api/analysis", { method: "POST" });
-      const data = await res.json();
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        // Vercel returns a non-JSON page when the function times out or crashes
+        throw new Error(
+          res.status === 504
+            ? "Analysis timed out on the server. Please try again."
+            : `Server error ${res.status}: ${text.slice(0, 200)}`
+        );
+      }
 
       if (data.patterns) {
         setAnalysis(data);
+        if (data.saveError) setErrorMessage(data.saveError);
         setState("results");
       } else {
+        setErrorMessage(data.error || "Analysis returned no patterns.");
         setState("ready");
       }
-    } catch {
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : String(e));
       setState("ready");
     }
 
@@ -191,6 +208,12 @@ export default function AnalysisPage() {
           </p>
         </div>
 
+        {errorMessage && (
+          <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            {errorMessage}
+          </div>
+        )}
+
         <Card className="glass-strong">
           <CardContent className="pt-6 text-center space-y-4">
             <div className="flex items-center justify-center gap-2">
@@ -234,6 +257,12 @@ export default function AnalysisPage() {
 
   return (
     <div className="space-y-8">
+      {errorMessage && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          {errorMessage}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
