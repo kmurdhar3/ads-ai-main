@@ -20,7 +20,8 @@ export async function GET() {
 
       const { data, error } = await supabase
         .from("search_results")
-        .select("*, meta_ads(*)")
+        .select("keywords, searched_at, advertisers, total_ads_scraped")
+        .eq("user_id", user.id)
         .order("searched_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -30,8 +31,18 @@ export async function GET() {
         return NextResponse.json(null);
       }
 
-      // data will be null if no row found, which is valid
-      return NextResponse.json(data);
+      // data will be null if no row found, which is valid.
+      // Map DB columns to the camelCase SearchState the UI expects.
+      return NextResponse.json(
+        data
+          ? {
+              keywords: data.keywords,
+              searchedAt: data.searched_at,
+              advertisers: data.advertisers,
+              totalAdsScraped: data.total_ads_scraped,
+            }
+          : null
+      );
     }
   } catch (e) {
     console.error("Error in search GET handler:", e);
@@ -214,36 +225,47 @@ export async function POST(req: NextRequest) {
           stopHeartbeat();
         }
 
-            if (allMetaAds.length > 0) {
-              if (user && brandId) {
-                // Persist meta-ads and search result into Supabase
-                await saveMetaAds(user.id, brandId, allMetaAds);
-
-                try {
-                  const supabase = await createClient();
-                  const advertisers = scoreAdvertisers(allMetaAds);
-                  const { error } = await supabase.from("search_results").insert({
-                    user_id: user.id,
-                    keywords,
-                    advertisers,
-                    total_ads_scraped: allMetaAds.length,
-                    searched_at: new Date().toISOString(),
-                  });
-
-                  if (error) {
-                    console.error("Failed to insert search_results:", error);
-                  }
-                } catch (e) {
-                  console.error("Exception inserting search_results:", e);
-                }
-              } else {
-                await writeMetaAds(allMetaAds);
-              }
-            }
-
         emit({ phase: "scoring", message: "Scoring advertisers..." });
 
         const advertisers = scoreAdvertisers(allMetaAds);
+
+        // Errors here must not escape: an uncaught throw kills the stream
+        // ("failed to pipe response") and the user sees nothing.
+        if (allMetaAds.length > 0) {
+          try {
+            if (user && brandId) {
+              const supabase = await createClient();
+              const searchedAt = new Date().toISOString();
+              const { data: searchRow, error } = await supabase
+                .from("search_results")
+                .insert({
+                  user_id: user.id,
+                  brand_context_id: brandId,
+                  keywords,
+                  advertisers,
+                  total_ads_scraped: allMetaAds.length,
+                  searched_at: searchedAt,
+                  raw_data: { keywords, adsPerKeyword, searchedAt, errors },
+                })
+                .select("id")
+                .single();
+              if (error) throw new Error(`Save search failed: ${error.message}`);
+
+              await saveMetaAds(user.id, brandId, allMetaAds, searchRow?.id ?? null);
+            } else {
+              await writeMetaAds(allMetaAds);
+            }
+          } catch (e) {
+            const errMsg = e instanceof Error ? e.message : String(e);
+            console.error("[search] Failed to save results:", e);
+            emit({
+              phase: "error",
+              message: `Found ${allMetaAds.length} ads but could not save them — ${errMsg}`,
+            });
+            controller.close();
+            return;
+          }
+        }
 
         // Only write local files for unauthenticated users
         if (!user) {

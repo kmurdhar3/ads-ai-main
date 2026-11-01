@@ -318,6 +318,20 @@ export default function CompetitorsPage() {
           </p>
         </div>
 
+        {/* Show why the last search failed (otherwise it vanishes when we return here) */}
+        {progress.find((p) => p.phase === "error")?.message && (
+          <Card className="border-red-500/20 bg-red-500/10">
+            <CardContent className="pt-4 pb-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-200">
+                  {progress.find((p) => p.phase === "error")?.message}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Card className="glass-strong">
           <CardHeader>
             <CardTitle className="text-base">Search Keywords</CardTitle>
