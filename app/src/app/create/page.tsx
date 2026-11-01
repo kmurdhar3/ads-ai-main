@@ -211,8 +211,18 @@ export default function CreatePage() {
         let buffer = "";
         let chunkFinished = false;
 
+        // A dropped connection only loses this request: concepts already
+        // finished are saved server-side, so log it and move on to the next 3.
+        let dropError: string | null = null;
         while (true) {
-          const { done, value } = await reader.read();
+          let chunk: ReadableStreamReadResult<Uint8Array>;
+          try {
+            chunk = await reader.read();
+          } catch (readErr) {
+            if (!chunkFinished) dropError = (readErr as Error).message || String(readErr);
+            break;
+          }
+          const { done, value } = chunk;
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
@@ -251,10 +261,13 @@ export default function CreatePage() {
           }
         }
 
+        if (controller.signal.aborted) break;
         if (!chunkFinished) {
-          errors.push(`Connection closed while generating concepts ${offset + 1}-${Math.min(offset + CHUNK, conceptCount)}. Concepts finished before that were saved.`);
+          errors.push(
+            `Connection dropped while generating concepts ${offset + 1}-${Math.min(offset + CHUNK, conceptCount)}` +
+            `${dropError ? ` (${dropError})` : ""}. Continuing with the rest; finished concepts were saved.`
+          );
           setGenerateErrors([...errors]);
-          break;
         }
       }
 
