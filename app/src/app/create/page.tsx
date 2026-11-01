@@ -97,6 +97,7 @@ export default function CreatePage() {
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0, message: "" });
   const [generateErrors, setGenerateErrors] = useState<string[]>([]);
+  const [downloading, setDownloading] = useState<string | null>(null);
   const [showSetup, setShowSetup] = useState(false);
   const [status, setStatus] = useState<StatusData | null>(null);
   const [elapsedDisplay, setElapsedDisplay] = useState(0);
@@ -398,26 +399,36 @@ export default function CreatePage() {
     }
   }
 
-  async function downloadBatch(batchId: string) {
+  // batchId = one batch; null = every concept for this brand
+  async function downloadBatch(batchId: string | null) {
+    const query = batchId ? `batchId=${encodeURIComponent(batchId)}` : "all=1";
+    setDownloading(batchId ?? "all");
     try {
-      const response = await fetch(`/api/export-batch?batchId=${encodeURIComponent(batchId)}`);
+      const response = await fetch(`/api/export-batch?${query}`);
 
       if (!response.ok) {
-        throw new Error("Batch download failed");
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || `Download failed (${response.status})`);
       }
+
+      // Use the server's filename, e.g. jobmatchapply-all-concepts.zip
+      const disposition = response.headers.get("content-disposition") || "";
+      const filename = disposition.match(/filename="([^"]+)"/)?.[1] || "concepts.zip";
 
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "batch-export.zip";
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (e) {
       console.error("Batch download failed:", e);
-      alert("Failed to download batch");
+      alert((e as Error).message || "Failed to download");
+    } finally {
+      setDownloading(null);
     }
   }
 
@@ -648,6 +659,23 @@ export default function CreatePage() {
       {/* Batch Timeline */}
       {concepts.length > 0 && (
         <div className="space-y-4">
+          {/* Download every concept for this brand in one ZIP */}
+          {batches.length > 0 && (
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => downloadBatch(null)}
+                disabled={downloading !== null}
+                className="flex items-center gap-1.5"
+                title="Images, ad copy, video scripts and strategy for every concept"
+              >
+                {downloading === "all" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                <span className="text-xs">{downloading === "all" ? "Preparing ZIP..." : `Download all (${concepts.length})`}</span>
+              </Button>
+            </div>
+          )}
+
           {/* Recent Batches */}
           {batches.map((batch) => {
             const batchConcepts = conceptsByBatch.get(batch.id) || [];
@@ -687,10 +715,11 @@ export default function CreatePage() {
                         e.stopPropagation();
                         downloadBatch(batch.id);
                       }}
-                      title="Download batch as ZIP"
+                      disabled={downloading !== null}
+                      title="Download batch as ZIP (images, copy, scripts, strategy)"
                       className="flex items-center gap-1.5"
                     >
-                      <Download className="h-4 w-4" />
+                      {downloading === batch.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                       <span className="text-xs">Download</span>
                     </Button>
                     <Button
