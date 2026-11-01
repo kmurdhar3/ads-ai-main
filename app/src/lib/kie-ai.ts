@@ -6,8 +6,10 @@ const BASE_URL = "https://api.kie.ai/api/v1/jobs";
 export async function generateAdImage(
   prompt: string,
   referenceImageUrls: string[] = [],
-  options: { aspectRatio?: string } = {}
+  options: { aspectRatio?: string; maxWaitMs?: number } = {}
 ): Promise<string> {
+  // Polls every 3s. Default 4 minutes; callers on a time budget pass less.
+  const maxPolls = Math.max(1, Math.floor((options.maxWaitMs ?? 240_000) / 3000));
   const createRes = await fetch(`${BASE_URL}/createTask`, {
     method: "POST",
     headers: {
@@ -45,7 +47,7 @@ export async function generateAdImage(
   console.log(`[Kie.ai] Task created: ${taskId}`);
 
   // Increase timeout: 80 iterations × 3s = 4 minutes
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < maxPolls; i++) {
     await new Promise((r) => setTimeout(r, 3000));
 
     const statusRes = await fetch(
@@ -57,7 +59,7 @@ export async function generateAdImage(
     const state = result.data?.state;
 
     if (i % 10 === 0) {
-      console.log(`[Kie.ai] Poll ${i}/80 - State: ${state || 'unknown'}`);
+      console.log(`[Kie.ai] Poll ${i}/${maxPolls} - State: ${state || 'unknown'}`);
     }
 
     if (state === "success") {
@@ -74,7 +76,7 @@ export async function generateAdImage(
     }
   }
 
-  throw new Error("Image generation timed out after 4 minutes");
+  throw new Error(`Image generation timed out after ${maxPolls * 3}s`);
 }
 
 async function downloadGeneratedImage(

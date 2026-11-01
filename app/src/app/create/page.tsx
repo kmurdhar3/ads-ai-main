@@ -96,6 +96,7 @@ export default function CreatePage() {
   const [metaAds, setMetaAds] = useState<MetaAdEntry[]>([]);
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0, message: "" });
+  const [generateErrors, setGenerateErrors] = useState<string[]>([]);
   const [showSetup, setShowSetup] = useState(false);
   const [status, setStatus] = useState<StatusData | null>(null);
   const [elapsedDisplay, setElapsedDisplay] = useState(0);
@@ -167,72 +168,106 @@ export default function CreatePage() {
   async function handleBatchGenerate() {
     setGenerating(true);
     setConcepts([]);
+    setGenerateErrors([]);
     setProgress({ current: 0, total: conceptCount, message: "Starting batch generation..." });
     startTimer();
 
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // Vercel stops a request after 5 minutes, so ask for 3 concepts per request
+    // (they run in parallel on the server) and keep going until we have them all.
+    const CHUNK = 3;
+    let batchId: string | null = null;
+    let made = 0;
+    const errors: string[] = [];
+
     try {
-      const res = await fetch("/api/create/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          count: conceptCount,
-          productNames: selectedProducts.length > 0 ? selectedProducts : undefined,
-        }),
-        signal: controller.signal,
-      });
+      for (let offset = 0; offset < conceptCount; offset += CHUNK) {
+        const res = await fetch("/api/create/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            count: Math.min(CHUNK, conceptCount - offset),
+            totalCount: conceptCount,
+            offset,
+            batchId,
+            productNames: selectedProducts.length > 0 ? selectedProducts : undefined,
+          }),
+          signal: controller.signal,
+        });
 
-      if (!res.body) throw new Error("No response body");
+        // Validation errors (no brand, no ads) come back as plain JSON
+        if (!res.headers.get("content-type")?.includes("text/event-stream")) {
+          const text = await res.text();
+          let msg = `Server error ${res.status}: ${text.slice(0, 200)}`;
+          try { msg = JSON.parse(text).error || msg; } catch { /* not JSON */ }
+          throw new Error(msg);
+        }
+        if (!res.body) throw new Error("No response body");
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let chunkFinished = false;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() || "";
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
 
-        for (const part of parts) {
-          const line = part.trim();
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === "concept" && data.concept) {
+          for (const part of parts) {
+            const line = part.trim();
+            if (!line.startsWith("data: ")) continue;
+            let data;
+            try { data = JSON.parse(line.slice(6)); } catch { continue; }
+
+            if (data.type === "start") {
+              batchId = data.batchId || batchId;
+            } else if (data.type === "concept" && data.concept) {
+              made++;
               setConcepts((prev) => {
-                const exists = prev.some((c) => c.id === data.concept.id);
-                if (exists) return prev;
+                if (prev.some((c) => c.id === data.concept.id)) return prev;
                 return [...prev, data.concept];
               });
+              setProgress((prev) => ({ ...prev, current: made }));
             } else if (data.type === "progress") {
-              setProgress({
-                current: data.current,
-                total: data.total,
-                message: data.message,
-              });
+              setProgress({ current: made, total: conceptCount, message: data.message });
             } else if (data.type === "qc-retry") {
-              setProgress((prev) => ({
-                ...prev,
-                message: data.message,
-              }));
-            } else if (data.type === "complete") {
-              setProgress((prev) => ({
-                ...prev,
-                current: data.total,
-                message: `Done! Generated ${data.total} concepts.`,
-              }));
+              setProgress((prev) => ({ ...prev, message: data.message }));
+            } else if (data.type === "concept-error") {
+              errors.push(data.message);
+              setGenerateErrors([...errors]);
+            } else if (data.type === "chunk-complete") {
+              chunkFinished = true;
+              for (const err of data.errors || []) {
+                if (!errors.includes(err)) errors.push(err);
+              }
+              setGenerateErrors([...errors]);
             }
-          } catch { /* skip malformed events */ }
+          }
+        }
+
+        if (!chunkFinished) {
+          errors.push(`Connection closed while generating concepts ${offset + 1}-${Math.min(offset + CHUNK, conceptCount)}. Concepts finished before that were saved.`);
+          setGenerateErrors([...errors]);
+          break;
         }
       }
+
+      setProgress((prev) => ({
+        ...prev,
+        current: made,
+        message: `Done! Generated ${made} of ${conceptCount} concepts.`,
+      }));
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         console.error("Batch generation failed:", e);
+        errors.push((e as Error).message);
+        setGenerateErrors([...errors]);
       }
     }
 
@@ -243,6 +278,10 @@ export default function CreatePage() {
     fetch("/api/create")
       .then((r) => r.json())
       .then((data) => setConcepts(Array.isArray(data) ? data : []))
+      .catch(() => {});
+    fetch("/api/batches")
+      .then((r) => r.json())
+      .then((data) => setBatches(Array.isArray(data) ? data : []))
       .catch(() => {});
   }
 
@@ -578,6 +617,14 @@ export default function CreatePage() {
             </div>
           );
         })()}
+
+        {generateErrors.length > 0 && (
+          <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-200 space-y-1">
+            {generateErrors.map((err, i) => (
+              <p key={i}>{err}</p>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Batch Timeline */}

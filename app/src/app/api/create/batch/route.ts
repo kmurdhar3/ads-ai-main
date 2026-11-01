@@ -7,8 +7,7 @@ import { getBrandContext, getMostRecentBrandId } from "@/lib/db/brand-context";
 import { getProducts } from "@/lib/db/products";
 import { getMetaAds } from "@/lib/db/meta-ads";
 import { getLatestAnalysis } from "@/lib/db/analysis";
-import { createServerClient } from "@supabase/ssr";
-import { saveConcept, createConceptBatch, updateConceptBatchStats } from "@/lib/db/concepts";
+import { saveConcept, createConceptBatch, updateConceptBatchStats, getConceptsByBatch } from "@/lib/db/concepts";
 import { generateReplicaAdConcept } from "@/lib/claude";
 import { evaluateCreative } from "@/lib/quality-control";
 import { generateAdImage } from "@/lib/kie-ai";
@@ -71,7 +70,12 @@ export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const count: number = Math.min(Math.max(body.count || 10, 1), 30);
+  // Vercel stops a request after 300s, so the page asks for a few concepts per
+  // request (count) and walks through the full run (totalCount) with offset.
+  const count: number = Math.min(Math.max(body.count || 3, 1), 30);
+  const totalCount: number = Math.min(Math.max(body.totalCount || count, count), 30);
+  const offset: number = Math.max(body.offset || 0, 0);
+  const existingBatchId: string | null = body.batchId || null;
   const productNames: string[] | undefined = body.productNames;
 
   const user = await getAuthenticatedUser();
@@ -145,33 +149,26 @@ export async function POST(req: NextRequest) {
 
   const topAds = [...metaAds]
     .sort((a, b) => b.daysRunning - a.daysRunning)
-    .slice(0, count * 2);
+    .slice(0, totalCount * 2);
 
-  // Dynamic pairing: distribute top ads across products
-  const assignments: { ad: typeof topAds[0]; product: typeof products[0] | null }[] = [];
-
-  if (products.length > 0) {
-    for (let i = 0; i < count; i++) {
-      const ad = topAds[i % topAds.length];
-      const product = products[i % products.length];
-      assignments.push({ ad, product });
-    }
-  } else {
-    for (let i = 0; i < count; i++) {
-      const ad = topAds[i % topAds.length];
-      assignments.push({ ad, product: null });
-    }
+  // Dynamic pairing: distribute top ads across products. Index from `offset`
+  // so each request continues where the previous one stopped.
+  const assignments: { index: number; ad: typeof topAds[0]; product: typeof products[0] | null }[] = [];
+  for (let i = offset; i < Math.min(offset + count, totalCount); i++) {
+    assignments.push({
+      index: i,
+      ad: topAds[i % topAds.length],
+      product: products.length > 0 ? products[i % products.length] : null,
+    });
   }
 
   const encoder = new TextEncoder();
-  const allConcepts: AdConcept[] = [];
 
-  // Phase 3: Create batch record before generation
-  let batchId: string | null = null;
-  if (user && brandId) {
+  // Create the batch record on the first request only; later requests reuse it.
+  let batchId: string | null = existingBatchId;
+  if (user && brandId && !batchId) {
     try {
-      const selectedProductNames = products.map(p => p.name);
-      batchId = await createConceptBatch(user.id, brandId, selectedProductNames, count);
+      batchId = await createConceptBatch(user.id, brandId, products.map((p) => p.name), totalCount);
     } catch (e) {
       console.error("Failed to create batch:", e);
     }
@@ -185,191 +182,133 @@ export async function POST(req: NextRequest) {
         } catch { /* stream closed */ }
       }
 
-      const PARALLEL = 3;
       const startTime = Date.now();
+      const elapsedMs = () => Date.now() - startTime;
+      // Keep the whole request under Vercel's 300s limit.
+      const BUDGET_MS = 270_000;
 
-      send({ type: "start", total: assignments.length, parallel: PARALLEL });
+      // Generation goes quiet for minutes (Claude + Kie.ai polling); a heartbeat
+      // every 10s keeps the connection from being dropped.
+      const heartbeat = setInterval(() => {
+        send({ type: "heartbeat", elapsedSeconds: Math.round(elapsedMs() / 1000) });
+      }, 10_000);
 
-      for (let i = 0; i < assignments.length; i += PARALLEL) {
-        const batch = assignments.slice(i, i + PARALLEL);
-        const batchEnd = Math.min(i + PARALLEL, assignments.length);
-        const batchLabel = batch.length === 1
-          ? `concept ${i + 1}`
-          : `concepts ${i + 1}-${batchEnd}`;
+      const errors: string[] = [];
+      let savedCount = 0;
 
-        send({
-          type: "progress",
-          current: i + 1,
-          total: assignments.length,
-          batchSize: batch.length,
-          message: `Generating ${batchLabel} of ${assignments.length} in parallel...`,
+      send({ type: "start", total: totalCount, offset, batchId });
+      send({
+        type: "progress",
+        current: offset + 1,
+        total: totalCount,
+        message: `Generating concepts ${offset + 1}-${offset + assignments.length} of ${totalCount}...`,
+      });
+
+      async function makeImage(prompt: string, ad: MetaAdEntry): Promise<string> {
+        // Leave ~40s for QC and saving after the image.
+        const maxWaitMs = Math.max(30_000, BUDGET_MS - elapsedMs() - 40_000);
+        try {
+          return await generateAdImage(prompt, ad.imageUrl ? [ad.imageUrl] : [], {
+            aspectRatio: detectAspectRatio(ad),
+            maxWaitMs,
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error("Image generation failed:", e);
+          errors.push(`Image: ${msg}`);
+          return "";
+        }
+      }
+
+      try {
+        await Promise.allSettled(
+          assignments.map(async ({ index: idx, ad, product }) => {
+            try {
+              const adHook = hookMap.get(ad.id);
+
+              let concept = await generateReplicaAdConcept(brand, product, ad, knowledgeTactics, undefined, adHook);
+              if (concept.imagePrompt) {
+                concept.generatedImageUrl = await makeImage(concept.imagePrompt, ad);
+              }
+
+              // Quality control (one retry, only if there is time left for it)
+              if (brandContext) {
+                try {
+                  const qc = await evaluateCreative(concept, brandContext, ad, products);
+                  concept.qualityScore = qc.overallScore;
+                  concept.qualityFeedback = qc.feedback;
+                  concept.qcPassed = qc.passed;
+
+                  if (!qc.passed && elapsedMs() < 90_000) {
+                    send({
+                      type: "qc-retry",
+                      index: idx,
+                      score: qc.overallScore,
+                      message: `Concept ${idx + 1} scored ${qc.overallScore}/10 — retrying...`,
+                    });
+
+                    const retried = await generateReplicaAdConcept(brand, product, ad, knowledgeTactics, qc.feedback, adHook);
+                    if (retried.imagePrompt) {
+                      retried.generatedImageUrl = await makeImage(retried.imagePrompt, ad);
+                    }
+                    const retryQc = await evaluateCreative(retried, brandContext, ad, products);
+                    retried.qualityScore = retryQc.overallScore;
+                    retried.qualityFeedback = retryQc.feedback;
+                    retried.qcPassed = retryQc.passed;
+                    if (retryQc.overallScore > qc.overallScore) concept = retried;
+                  }
+                } catch (e) {
+                  console.error(`QC failed for concept ${idx + 1}:`, e);
+                }
+              }
+
+              // Save right away so finished work survives even if the request is cut off.
+              if (user && brandId) {
+                await saveConcept(user.id, brandId, concept, batchId || undefined);
+                savedCount++;
+              }
+
+              send({ type: "concept", index: idx, concept, qcPassed: concept.qcPassed, qcScore: concept.qualityScore });
+              return concept;
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              console.error(`Concept ${idx + 1} failed:`, e);
+              errors.push(`Concept ${idx + 1}: ${msg}`);
+              send({ type: "concept-error", index: idx, message: `Concept ${idx + 1} failed: ${msg}` });
+              throw e;
+            }
+          })
+        ).then(async (results) => {
+          if (!user) {
+            const done = results
+              .filter((r): r is PromiseFulfilledResult<AdConcept> => r.status === "fulfilled")
+              .map((r) => r.value);
+            await writeConcepts(done);
+          }
         });
 
-        const results = await Promise.allSettled(
-          batch.map(async (assignment, batchIdx) => {
-            const idx = i + batchIdx;
-            const { ad, product } = assignment;
-
-            const adHook = hookMap.get(ad.id);
-
-            let concept = await generateReplicaAdConcept(
-              brand,
-              product,
-              ad,
-              knowledgeTactics,
-              undefined,
-              adHook,
-            );
-
-            // Generate image — match aspect ratio to reference ad's image
-            if (concept.imagePrompt) {
-              try {
-                const referenceUrls = ad.imageUrl ? [ad.imageUrl] : [];
-                const aspectRatio = detectAspectRatio(ad);
-
-                const imageUrl = await generateAdImage(concept.imagePrompt, referenceUrls, {
-                  aspectRatio,
-                });
-                concept.generatedImageUrl = imageUrl;
-              } catch (e) {
-                console.error(`Image generation failed for concept ${idx + 1}:`, e);
-              }
-            }
-
-            // Quality control
-            if (brandContext) {
-              try {
-                const qc = await evaluateCreative(concept, brandContext, ad, products);
-                concept.qualityScore = qc.overallScore;
-                concept.qualityFeedback = qc.feedback;
-                concept.qcPassed = qc.passed;
-
-                if (!qc.passed) {
-                  send({
-                    type: "qc-retry",
-                    index: idx,
-                    score: qc.overallScore,
-                    message: `Concept ${idx + 1} scored ${qc.overallScore}/10 — retrying...`,
-                  });
-
-                  const retried = await generateReplicaAdConcept(
-                    brand,
-                    product,
-                    ad,
-                    knowledgeTactics,
-                    qc.feedback,
-                    adHook,
-                  );
-
-                  if (retried.imagePrompt) {
-                    try {
-                      const referenceUrls = ad.imageUrl ? [ad.imageUrl] : [];
-                      const retryAspectRatio = detectAspectRatio(ad);
-                      const imageUrl = await generateAdImage(retried.imagePrompt, referenceUrls, {
-                        aspectRatio: retryAspectRatio,
-                      });
-                      retried.generatedImageUrl = imageUrl;
-                    } catch (e) {
-                      console.error(`Retry image generation failed:`, e);
-                    }
-                  }
-
-                  const retryQc = await evaluateCreative(retried, brandContext, ad, products);
-                  retried.qualityScore = retryQc.overallScore;
-                  retried.qualityFeedback = retryQc.feedback;
-                  retried.qcPassed = retryQc.passed;
-
-                  if (retryQc.overallScore > qc.overallScore) {
-                    concept = retried;
-                  }
-                }
-              } catch (e) {
-                console.error(`QC failed for concept ${idx + 1}:`, e);
-              }
-            }
-
-            send({
-              type: "concept",
-              index: idx,
-              concept,
-              qcPassed: concept.qcPassed,
-              qcScore: concept.qualityScore,
-            });
-            return concept;
-          })
-        );
-
-        for (const result of results) {
-          if (result.status === "fulfilled") {
-            allConcepts.push(result.value);
-          } else {
-            console.error("Concept generation failed:", result.reason);
+        // Batch stats: count all passing concepts saved so far for this batch
+        if (batchId && user) {
+          try {
+            const batchConcepts = await getConceptsByBatch(user.id, batchId);
+            await updateConceptBatchStats(batchId, batchConcepts.filter((c) => c.qcPassed !== false).length);
+          } catch (e) {
+            console.error("Failed to update batch stats:", e);
           }
         }
+      } finally {
+        clearInterval(heartbeat);
+        send({
+          type: "chunk-complete",
+          batchId,
+          offset,
+          generated: assignments.length,
+          saved: savedCount,
+          errors,
+          elapsedSeconds: Math.round(elapsedMs() / 1000),
+        });
+        controller.close();
       }
-
-      // Persist concepts per-user when authenticated
-      if (user) {
-        try {
-          // Bulk insert via server client for performance
-          const supabase = createServerClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-            { cookies: { getAll() { return req.cookies.getAll() }, setAll() {} } }
-          );
-
-          const rows = allConcepts.map((c) => ({
-            user_id: user.id,
-            brand_context_id: brandId!,
-            headline: c.headline,
-            body: c.body,
-            description: c.description || "",
-            cta_text: c.ctaText || "",
-            image_prompt: c.imagePrompt || "",
-            reference_image_url: c.referenceImageUrl || "",
-            generated_image_url: c.generatedImageUrl || "",
-            video_script: c.videoScript || "",
-            ad_type: c.adType || "static",
-            target_audience: c.targetAudience || "",
-            format: c.format || "",
-            placements: c.placements || "",
-            rationale: c.rationale || "",
-            product_name: c.productName || "",
-            inspiration_ad_ids: c.inspirationAdIds || "",
-            starred: c.starred || false,
-            quality_score: c.qualityScore || null,
-            quality_feedback: c.qualityFeedback || "",
-            qc_passed: c.qcPassed !== false,
-            created_at: c.createdAt || new Date().toISOString(),
-            batch_id: batchId || null,
-            parent_concept_id: null,
-            version: 1,
-          }));
-
-          await supabase.from("concepts").insert(rows);
-        } catch (e) {
-          // fallback: save individually
-          for (const c of allConcepts) {
-            try { await saveConcept(user.id, brandId!, c, batchId || undefined); } catch {}
-          }
-        }
-      } else {
-        await writeConcepts(allConcepts);
-      }
-
-      // Phase 3: Update batch stats with QC pass count
-      if (batchId && user) {
-        try {
-          const passedCount = allConcepts.filter(c => c.qcPassed !== false).length;
-          await updateConceptBatchStats(batchId, passedCount);
-        } catch (e) {
-          console.error("Failed to update batch stats:", e);
-        }
-      }
-
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      send({ type: "complete", total: allConcepts.length, elapsedSeconds: elapsed });
-      controller.close();
     },
   });
 
